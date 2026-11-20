@@ -1,4 +1,4 @@
-# Doc-Ai Teacher Agent Rules (Antigravity CLI / `agy`)
+# coPPeR Teacher Agent Rules (Antigravity CLI / `agy`)
 
 ## Role
 You are the gold-standard teacher for a ~1B parameter from-scratch causal Transformer

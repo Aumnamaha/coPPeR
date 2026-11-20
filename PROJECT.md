@@ -1,7 +1,7 @@
-# Doc-Ai — From-Scratch ~1B Document Transformer
+# coPPeR — From-Scratch ~1B Document Transformer
 
 ## Overview
-Doc-Ai is a from-scratch **~1 billion parameter causal Transformer** trained on synthetic
+coPPeR is a from-scratch **~1 billion parameter causal Transformer** trained on synthetic
 document data, designed for document reading, structured extraction, and document editing.
 
 ### Data Pipeline
@@ -28,7 +28,7 @@ document data, designed for document reading, structured extraction, and documen
 - Isolated venv at `build\.venv` with `tokenizers`, `datasets`, `safetensors`, `accelerate`, `tqdm`
 - Smoke test passing
 
-### [ ] Phase 2: Synthetic document generator + teacher distillation pipeline
+### [x] Phase 2: Synthetic document generator + teacher distillation pipeline
 - Qwen3.6-35B-A3B script for synthetic doc generation
 - Antigravity CLI (`agy`) integration for structured label production
 - Data loading and cleaning scripts
@@ -54,7 +54,7 @@ document data, designed for document reading, structured extraction, and documen
 
 ## Project Structure
 ```
-Doc-Ai/
+coPPeR/
 ├── .gitignore
 ├── AGENTS.md              # Teacher agent output schema rules
 ├── PROJECT.md             # This file — phase tracker
@@ -77,7 +77,7 @@ Doc-Ai/
 ## Quick Start
 ```powershell
 # Activate isolated venv
-& "C:\Users\Aum Namaha\Documents\Proj\Doc-Ai\build\.venv\Scripts\Activate.ps1"
+& "C:\Users\Aum Namaha\Documents\Proj\coPPeR\build\.venv\Scripts\Activate.ps1"
 
 # Run tests
 pytest -v
