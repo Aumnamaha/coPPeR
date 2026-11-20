@@ -33,9 +33,9 @@ document data, designed for document reading, structured extraction, and documen
 - Antigravity CLI (`agy`) integration for structured label production
 - Data loading and cleaning scripts
 
-### [ ] Phase 3: Custom domain BPE tokenizer (32k vocab) + tokenized dataset packing
-- Train BPE tokenizer on synthetic document corpus
-- Pack tokens into training-ready datasets
+### [x] Phase 3: Custom domain BPE tokenizer (32k vocab) + tokenized dataset packing
+- Trained ByteLevel BPE tokenizer with `vocab_size == 32768` and special tokens at IDs 0–9
+- Binary `.bin` packer producing `uint16` pretrain streams and `int32` SFT input/label arrays
 
 ### [ ] Phase 4: From-scratch ~1B causal Transformer architecture & unit tests
 - Implement causal attention, RoPE, SwiGLU feedforward, RMSNorm
