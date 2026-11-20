@@ -1,0 +1,13 @@
+build/
+data/
+checkpoints/
+exports/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.gguf
+*.safetensors
+*.pt
+*.bin
+.env
