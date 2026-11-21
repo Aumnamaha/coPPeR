@@ -59,11 +59,14 @@ document data, designed for document reading, structured extraction, and documen
   apply_heading_style, fix_grammar_and_clarity, extract_structured_json
 - 79 total tests passing (ruff + black clean)
 
-### [ ] Phase 6: Evaluation & GGUF export for multi-platform inference
-- Perplexity evaluation on held-out test set
-- Task-specific benchmarks (extraction accuracy, edit quality)
-- Export to GGUF format (`llama.cpp` quantization) for CPU/GPU inference
-- Target platforms: Intel Arc A750, Apple Silicon, RTX 40/50 series laptops
+### [x] Phase 6: Evaluation & GGUF export for multi-platform inference
+- Dataset preparation orchestrator (`scripts/prepare_dataset.py`): one-command pipeline (generate → distill → tokenizer train → pack)
+- Model evaluator (`scripts/evaluate_copper.py`): perplexity on pretrain eval, SFT cross-entropy loss, 4 deterministic task probes; saves JSON report to `exports/eval_report.json`
+- GGUF v3 exporter (`scripts/export_gguf.py`): pure Python + NumPy writer producing both HF-compatible directory and standalone GGUF binary with F16 / Q8_0 quantization
+- HuggingFace-compatible export: `copper-1b-hf/` with config.json, model.safetensors, tokenizer.json (compatible with `convert_hf_to_gguf.py`)
+- Llama architecture metadata keys in GGUF (`llama.context_length`, `llama.attention.head_count_kv`, etc.)
+- Q8_0 block quantization: 34 bytes per 32-element block (float16 scale + int8 weights)
+- 89 total tests passing (ruff + black clean)
 
 ### [ ] Phase 7: Windows screen-aware overlay app + Dockerized local server
 - Python desktop overlay (PyQt6 / Dear PyGui) for real-time document highlighting

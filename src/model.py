@@ -243,21 +243,32 @@ class CopperAttention(nn.Module):
             bsz, q_len, self.num_kv_heads, self.head_dim
         ).transpose(1, 2)
 
-        # KV-cache concatenation (BEFORE RoPE so cached K/V keep original embeddings)
+        # Rotary embeddings — apply BEFORE concatenation so each tensor gets
+        # the correct position offset.  Cached K/V already have their RoPE from
+        # when they were generated.
         if past_key_value is not None:
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
-
-        # Rotary embeddings
-        if past_key_value is not None:
-            # KV-cache path: apply RoPE only to Q_new and K_new at positions [0..q_len-1]
-            cos_q, sin_q = self.rotary(query_states)
+            past_len = past_key_value[0].shape[2]
+            q_pos = torch.arange(
+                past_len, past_len + q_len, device=query_states.device
+            ).unsqueeze(0)
+            cos_q, sin_q = self.rotary(query_states, position_ids=q_pos)
             query_states = _apply_rotary_emb(query_states, cos_q, sin_q)
+
+            k_pos = torch.arange(
+                past_len, past_len + q_len, device=key_states.device
+            ).unsqueeze(0)
+            cos_k, sin_k = self.rotary(key_states, position_ids=k_pos)
+            key_states = _apply_rotary_emb(key_states, cos_k, sin_k)
         else:
             # Training path: all tokens at [0..seq_len-1]
             cos, sin = self.rotary(query_states)
             query_states = _apply_rotary_emb(query_states, cos, sin)
             key_states = _apply_rotary_emb(key_states, cos, sin)
+
+        # KV-cache concatenation (after RoPE so cached K/V keep original embeddings)
+        if past_key_value is not None:
+            key_states = torch.cat([past_key_value[0], key_states], dim=2)
+            value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
         next_kv_cache = (key_states, value_states) if use_cache else None
 
