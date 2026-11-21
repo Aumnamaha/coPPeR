@@ -48,15 +48,28 @@ document data, designed for document reading, structured extraction, and documen
 - Unit tests for each architectural component
 - Correctness checks against reference implementations
 
-### [ ] Phase 5: Two-stage training (Domain Pretraining + Teacher SFT) on RTX 5070 Ti
-- Stage 1: Domain pretraining on synthetic document corpus
-- Stage 2: Supervised fine-tuning with teacher labels from `agy`
-- Checkpoint management, early stopping, LR scheduling
+### [x] Phase 5: Two-stage training (Domain Pretraining + Teacher SFT) on RTX 5070 Ti
+- Single-command trainer (`scripts/train_copper.py`) with VRAM preflight guard
+- Stage 1: Causal LM pretraining on packed `pretrain_train.bin` (cosine LR, gradient checkpointing)
+- Stage 2: SFT distillation on packed `sft_train_inputs.bin` + `sft_train_labels.bin` (-100 masked loss)
+- Checkpoint save/resume (`--resume` flag), periodic snapshots
+- `--smoke` mode: tiny 2-layer config runs in <15 s even with Qwen3.6 loaded on GPU
+- Screen-aware selection tokens `<|sel_start|>` (ID 10) and `<|sel_end|>` (ID 11)
+- Editor tool schemas (`EDITOR_TOOLS_SPEC`): replace_selection, insert_markdown_table,
+  apply_heading_style, fix_grammar_and_clarity, extract_structured_json
+- 79 total tests passing (ruff + black clean)
 
-### [ ] Phase 6: Evaluation & GGUF export for Intel Arc A750 inference
+### [ ] Phase 6: Evaluation & GGUF export for multi-platform inference
 - Perplexity evaluation on held-out test set
 - Task-specific benchmarks (extraction accuracy, edit quality)
-- Export to GGUF format for CPU/GPU inference on Intel Arc A750
+- Export to GGUF format (`llama.cpp` quantization) for CPU/GPU inference
+- Target platforms: Intel Arc A750, Apple Silicon, RTX 40/50 series laptops
+
+### [ ] Phase 7: Windows screen-aware overlay app + Dockerized local server
+- Python desktop overlay (PyQt6 / Dear PyGui) for real-time document highlighting
+- LibreOffice UNO / python-docx editor integration with tool-call dispatch
+- Docker container for local inference REST API (FastAPI + vLLM-compatible endpoint)
+- Auto-prompt installer: detects active editor window and injects screen-aware context
 
 ## Project Structure
 ```

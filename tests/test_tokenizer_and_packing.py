@@ -111,7 +111,7 @@ class TestBPETokenizerTraining:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from tokenizer_wrapper import SPECIAL_TOKENS
 
-        assert len(SPECIAL_TOKENS) == 10
+        assert len(SPECIAL_TOKENS) == 12
 
 
 # ---------------------------------------------------------------------------

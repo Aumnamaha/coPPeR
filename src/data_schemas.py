@@ -37,7 +37,55 @@ TASK_TEMPLATES = {
         "Edit only the section titled '{section}' according to these instructions: {instructions}. "
         "Output a unified diff or the exact revised Markdown text."
     ),
+    # Screen-aware selection editing tasks
+    "cursor_span_edit": (
+        "The document below has a highlighted span marked with "
+        "<|sel_start|>...<|sel_end|>. Replace ONLY that highlighted span according "
+        "to the user instruction. Output only the replacement text -- do not include "
+        "surrounding context, preamble, or explanation."
+    ),
+    "editor_tool_call": (
+        "Given a highlighted passage <|sel_start|>...<|sel_end|> and a user instruction, "
+        'output a strict JSON tool call: {"tool": "<tool_name>", "args": {...}}. '
+        "Available tools are listed in EDITOR_TOOLS_SPEC. Output ONLY the JSON object."
+    ),
 }
+
+EDITOR_TOOLS_SPEC = {
+    "replace_selection": {
+        "description": "Replace the selected text span with new content.",
+        "required_args": ["new_text"],
+        "optional_args": ["preserve_formatting"],
+    },
+    "insert_markdown_table": {
+        "description": "Insert a Markdown table at the selection anchor point.",
+        "required_args": ["headers", "rows"],
+        "optional_args": [],
+    },
+    "apply_heading_style": {
+        "description": "Apply heading level (H1-H6) to selected text.",
+        "required_args": ["level"],
+        "optional_args": [],
+    },
+    "fix_grammar_and_clarity": {
+        "description": "Fix grammar, spelling, and clarity in the selection.",
+        "required_args": [],
+        "optional_args": ["preserve_tone", "max_word_change"],
+    },
+    "extract_structured_json": {
+        "description": "Extract structured data from selected text as JSON.",
+        "required_args": ["schema_fields"],
+        "optional_args": [],
+    },
+}
+
+SUPPORTED_HOST_PLATFORMS = [
+    "libreoffice_writer",
+    "microsoft_word",
+    "markdown_editor",
+]
+
+_VALID_TOOL_NAMES = set(EDITOR_TOOLS_SPEC.keys())
 
 _FILLER_PREFIXES = (
     "sure",
@@ -86,6 +134,27 @@ def validate_teacher_output(task_name: str, output_text: str) -> tuple:
         if len(stripped) < 2:
             return False, "answer too short"
         return True, "valid grounded answer"
+
+    # Screen-aware cursor span edit: must be non-empty replacement text with no filler
+    if task_name == "cursor_span_edit":
+        if len(stripped) < 1:
+            return False, "empty replacement text"
+        return True, "valid span edit"
+
+    # Editor tool call: must parse as JSON dict with valid tool name and args dict
+    if task_name == "editor_tool_call":
+        try:
+            parsed = json.loads(stripped)
+            assert isinstance(parsed, dict), "not a dict"
+            assert "tool" in parsed, 'missing "tool" key'
+            assert "args" in parsed, 'missing "args" key'
+            assert isinstance(parsed["args"], dict), '"args" must be a dict'
+            assert (
+                parsed["tool"] in _VALID_TOOL_NAMES
+            ), f'unknown tool: {parsed["tool"]}'
+            return True, f"valid editor_tool_call ({parsed['tool']})"
+        except (json.JSONDecodeError, AssertionError) as exc:
+            return False, f"invalid editor_tool_call JSON: {exc}"
 
     # Default: accept non-empty, non-filler output
     return True, f"accepted ({task_name})"

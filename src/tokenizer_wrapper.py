@@ -21,6 +21,8 @@ SPECIAL_TOKENS: list[str] = [
     "<|doc_end|>",
     "<|diff_start|>",
     "<|diff_end|>",
+    "<|sel_start|>",
+    "<|sel_end|>",
 ]
 
 VOCAB_SIZE: int = 32768
@@ -194,6 +196,10 @@ def train_tokenizer_on_texts(
     raw_tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     raw_tok.decoder = decoders.ByteLevel()
 
+    # Add all special tokens BEFORE training so they occupy IDs 0..N.
+    for token in SPECIAL_TOKENS:
+        raw_tok.add_tokens([token])
+
     # Train with a modest initial size; the corpus likely has far fewer
     # unique byte-pair merges than 32768. We pad to the target below.
     initial_vocab = min(vocab_size, max(1000, len(texts) * 50))
@@ -205,12 +211,19 @@ def train_tokenizer_on_texts(
 
     raw_tok.train_from_iterator(texts, trainer=trainer)
 
-    # Pad vocabulary if corpus is tiny (smoke tests)
+    # Ensure all SPECIAL_TOKENS are present in the vocab.
+    # BpeTrainer.special_tokens may not add tokens absent from the training data,
+    # so we explicitly add any missing ones here (preserving existing IDs).
+    for token in SPECIAL_TOKENS:
+        if token not in raw_tok.get_vocab():
+            raw_tok.add_tokens([token])
+
+    # Pad vocabulary if corpus is tiny (smoke tests).
+    # Batch-add reserved tokens to avoid ~31k individual FFI calls.
     actual_vocab = raw_tok.get_vocab_size()
     if actual_vocab < vocab_size:
-        for i in range(actual_vocab, vocab_size):
-            token_name = f"<|reserved_{i}|>"
-            raw_tok.add_tokens([token_name])
+        reserved_tokens = [f"<|reserved_{i}|>" for i in range(actual_vocab, vocab_size)]
+        raw_tok.add_tokens(reserved_tokens)
 
     return raw_tok
 

@@ -170,8 +170,8 @@ class TestMockedE2EPipeline:
         assert "title" in parsed
 
     def test_task_templates_count(self):
-        """Verify exactly 5 task templates are defined."""
-        assert len(TASK_TEMPLATES) == 5
+        """Verify exactly 7 task templates (including screen-aware tasks)."""
+        assert len(TASK_TEMPLATES) == 7
 
 
 # ============================================================
