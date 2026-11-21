@@ -259,30 +259,41 @@ class TestKVCacheGeneration:
     def test_kv_cache_equivalence(self, tiny_model, device) -> None:
         _add_src_to_path()
 
+        # Enable deterministic cuDNN for reproducible attention computation
+        orig_deterministic = torch.backends.cudnn.deterministic
+        orig_benchmark = torch.backends.cudnn.benchmark
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
         model = tiny_model.to(torch.float32)
         model.eval()
-        batch, prompt_len = 1, 4
-        torch.manual_seed(42)
-        input_ids = torch.randint(0, 256, (batch, prompt_len), device=device)
 
-        # Generate tokens step-by-step using KV-cache
-        generated_kv = model.generate(
-            input_ids=input_ids.clone(), max_new_tokens=3, temperature=0.0
-        )
+        try:
+            batch, prompt_len = 1, 4
+            torch.manual_seed(42)
+            input_ids = torch.randint(0, 256, (batch, prompt_len), device=device)
 
-        # Replicate generation by repeated full forward passes (no cache)
-        torch.manual_seed(42)
-        input_ids_ref = torch.randint(0, 256, (batch, prompt_len), device=device)
-        generated_full = input_ids_ref.clone()
-        for _ in range(3):
-            out = model(input_ids=generated_full)
-            next_tok = out["logits"][:, -1, :].argmax(dim=-1, keepdim=True)
-            generated_full = torch.cat([generated_full, next_tok], dim=1)
+            # Generate tokens step-by-step using KV-cache
+            generated_kv = model.generate(
+                input_ids=input_ids.clone(), max_new_tokens=3, temperature=0.0
+            )
 
-        # Token sequences must match exactly
-        assert (
-            generated_kv == generated_full
-        ).all(), f"KV-cache tokens {generated_kv[0].tolist()} != full-fwd {generated_full[0].tolist()}"
+            # Replicate generation by repeated full forward passes (no cache)
+            torch.manual_seed(42)
+            input_ids_ref = torch.randint(0, 256, (batch, prompt_len), device=device)
+            generated_full = input_ids_ref.clone()
+            for _ in range(3):
+                out = model(input_ids=generated_full)
+                next_tok = out["logits"][:, -1, :].argmax(dim=-1, keepdim=True)
+                generated_full = torch.cat([generated_full, next_tok], dim=1)
+
+            # Token sequences must match exactly
+            assert (
+                generated_kv == generated_full
+            ).all(), f"KV-cache tokens {generated_kv[0].tolist()} != full-fwd {generated_full[0].tolist()}"
+        finally:
+            torch.backends.cudnn.deterministic = orig_deterministic
+            torch.backends.cudnn.benchmark = orig_benchmark
 
     def test_step_by_step_logits_match_prefix(self, tiny_model, device) -> None:
         """Generation step 0 logits match a full forward on the same prefix."""

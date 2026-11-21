@@ -1,0 +1,33 @@
+# Docker Compose for coPPeR local inference server.
+# Binds strictly to 127.0.0.1 (localhost) -- never exposed publicly.
+# Mounts checkpoints and exports read-only for offline personal use.
+
+version: "3.8"
+
+services:
+  copper-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: copper-inference
+    ports:
+      - "127.0.0.1:8088:8088"
+    volumes:
+      - ../checkpoints:/app/checkpoints:ro
+      - ../exports:/app/exports:ro
+      - ../data/tokenizer:/app/data/tokenizer:ro
+    environment:
+      - CHECKPOINT_DIR=/app/checkpoints/copper_1b_final
+      - TOKENIZER_PATH=/app/data/tokenizer
+      # Optional: proxy to llama-cpp server instead of PyTorch
+      # LLAMA_CPP_URL=http://host.docker.internal:8081/v1/completions
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8088/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+# To also run llama.cpp server alongside (for GGUF inference):
+#   docker compose -f docker/docker-compose.yml up copper-server llama-cpp

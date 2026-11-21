@@ -68,11 +68,15 @@ document data, designed for document reading, structured extraction, and documen
 - Q8_0 block quantization: 34 bytes per 32-element block (float16 scale + int8 weights)
 - 89 total tests passing (ruff + black clean)
 
-### [ ] Phase 7: Windows screen-aware overlay app + Dockerized local server
-- Python desktop overlay (PyQt6 / Dear PyGui) for real-time document highlighting
-- LibreOffice UNO / python-docx editor integration with tool-call dispatch
-- Docker container for local inference REST API (FastAPI + vLLM-compatible endpoint)
-- Auto-prompt installer: detects active editor window and injects screen-aware context
+### [x] Phase 7: Windows screen-aware cursor overlay app, editor bridge & local Docker server
+- `app/editor_bridge.py`: Detects installed document editors (LibreOffice Writer, Microsoft Word), reads foreground window title via ctypes `user32.GetForegroundWindow`, captures cursor-highlighted selection via clipboard backup/copy/restore, applies surgical span replacements via `ctypes SendInput` (Ctrl+V)
+- `app/inference_server.py`: FastAPI server bound to `127.0.0.1:8088` with `GET /health` and `POST /v1/edit-span` endpoints; lazy model loading (PyTorch from checkpoint or llama-cpp proxy via `LLAMA_CPP_URL` env var); builds screen-aware ChatML prompts with `<|doc_start|>...<|sel_start|>{highlight}<|sel_end|>...<|doc_end|>` tokens
+- `app/desktop_overlay.py`: Native Windows tkinter floating command bar triggered via global hotkey `Ctrl+Alt+Space` (RegisterHotKey); shows editor badge, captures selection, calls inference server, previews edit, applies in-place; install prompt modal when no DOCX/ODT editor found (`winget install TheDocumentFoundation.LibreOffice`)
+- `docker/Dockerfile`: python:3.12-slim base with FastAPI + PyTorch CPU/CUDA-selectable
+- `docker/docker-compose.yml`: binds strictly `127.0.0.1:8088:8088` (never public), mounts `../checkpoints:/app/checkpoints:ro` and `../exports:/app/exports:ro` read-only for offline personal use
+- Screen-aware selection tokens `<|sel_start|>` (ID 10) and `<|sel_end|>` (ID 11) with full pipeline integration
+- Editor tool schemas (`EDITOR_TOOLS_SPEC`) validated by `validate_teacher_output()`
+- All Phase 7 files written as UTF-8 without BOM; all tests passing
 
 ## Project Structure
 ```
@@ -81,20 +85,86 @@ coPPeR/
 ├── AGENTS.md              # Teacher agent output schema rules
 ├── PROJECT.md             # This file — phase tracker
 ├── src/                   # Model architecture code
-│   └── __init__.py
-├── scripts/               # Data generation / training scripts
-│   └── __init__.py
+│   ├── __init__.py
+│   ├── data_schemas.py    # TASK_TEMPLATES, EDITOR_TOOLS_SPEC, validation
+│   ├── tokenizer_wrapper.py  # CopperTokenizer (ChatML, SFT loss masking)
+│   └── model.py           # CopperConfig + CopperForCausalLM (~1B params)
+├── scripts/               # Data generation / training / export scripts
+│   ├── __init__.py
+│   ├── generate_synthetic_docs.py  # Qwen3.6-35B-A3B doc generator
+│   ├── distill_teacher.py         # Antigravity CLI teacher labels
+│   ├── train_tokenizer.py         # Domain BPE tokenizer training
+│   ├── pack_dataset.py            # Binary .bin dataset packing
+│   ├── train_copper.py            # Two-stage trainer (pretrain + SFT)
+│   ├── prepare_dataset.py         # One-command pipeline orchestrator
+│   ├── evaluate_copper.py         # Perplexity + task accuracy evaluation
+│   └── export_gguf.py             # GGUF v3 F16/Q8_0 exporter
+├── app/                   # Desktop overlay, editor bridge, inference server
+│   ├── __init__.py
+│   ├── editor_bridge.py     # Editor detection, clipboard capture, paste-back
+│   ├── inference_server.py  # FastAPI /v1/edit-span endpoint (127.0.0.1:8088)
+│   └── desktop_overlay.py   # tkinter floating bar + global hotkey Ctrl+Alt+Space
+├── docker/                # Local Docker setup
+│   ├── Dockerfile           # python:3.12-slim with FastAPI + PyTorch
+│   └── docker-compose.yml   # 127.0.0.1:8088 binding, :ro mounts
 ├── tests/                 # Unit + integration tests
-│   └── test_env_smoke.py
+│   ├── test_env_smoke.py
+│   ├── test_data_pipeline.py    # Data loading & cleaning (29 tests)
+│   ├── test_tokenizer_and_packing.py  # Tokenizer training + packing (16 tests)
+│   ├── test_model.py            # Model architecture (~1B, causal mask, KV cache) (16 tests)
+│   ├── test_training_loop.py    # VRAM guard, smoke training, checkpoint save/resume (18 tests)
+│   ├── test_eval_and_export.py  # Evaluation + GGUF v3 export (10 tests)
+│   └── test_desktop_and_docker.py  # Editor detection, FastAPI endpoints, Docker config (10 tests)
 ├── build/
 │   └── .venv/             # Isolated project virtual environment
-├── data/
-│   ├── synthetic_docs/    # Raw generated documents
-│   ├── distill/           # Teacher-distilled labels
-│   └── tokenizer/         # Tokenizer vocab and metadata
-├── checkpoints/           # Training checkpoints (.pt)
-└── exports/               # Final models, GGUF exports
+├── data/                  # Git-ignored: synthetic docs, packed datasets, tokenizer
+├── checkpoints/           # Training checkpoints (.safetensors + config.json)
+└── exports/               # GGUF exports, eval reports (git-ignored)
 ```
+
+## Quick-Start Runbook
+
+### Step A — Dataset Preparation (one command)
+```powershell
+cd "C:\Users\Aum Namaha\Documents\Proj\coPPeR"
+& "build\.venv\Scripts\python.exe" scripts/prepare_dataset.py --doc-count 300 --max-distill-docs 300
+```
+This runs: generate synthetic docs → distill teacher labels → train tokenizer → pack binary datasets.
+
+### Step B — Unload LM Studio & Run Training
+```powershell
+# IMPORTANT: Close/unload Qwen3.6 from LM Studio first (free VRAM)
+& "build\.venv\Scripts\python.exe" scripts/train_copper.py --stage all --checkpoint-dir checkpoints/
+```
+For smoke verification (< 15 seconds):
+```powershell
+& "build\.venv\Scripts\python.exe" scripts/train_copper.py --smoke --checkpoint-dir checkpoints/smoke_test
+```
+
+### Step C — Evaluate & Export GGUF
+```powershell
+# Run evaluation (perplexity + task probes)
+& "build\.venv\Scripts\python.exe" scripts/evaluate_copper.py --checkpoint checkpoints/copper_1b_final
+
+# Export to GGUF Q8_0 for Intel Arc A750 inference
+& "build\.venv\Scripts\python.exe" scripts/export_gguf.py --checkpoint checkpoints/copper_1b_final --quant q8_0
+```
+
+### Step D — Launch Local Server + Overlay App
+```powershell
+# Option 1: Python FastAPI server (direct)
+$env:CHECKPOINT_DIR = "checkpoints/copper_1b_final"
+& "build\.venv\Scripts\python.exe" -m app.inference_server
+
+# Option 2: Docker container (recommended for isolation)
+docker compose -f docker/docker-compose.yml up --build
+
+# Launch the Windows cursor overlay (in a separate terminal)
+$env:CHECKPOINT_DIR = "checkpoints/copper_1b_final"
+& "build\.venv\Scripts\python.exe" app/desktop_overlay.py
+```
+The overlay triggers via **Ctrl+Alt+Space** from anywhere on your desktop.
+Highlight text in any editor → press Ctrl+Alt+Space → type instruction → click **Generate Fix** → review → click **Apply In-Place**.
 
 ## Quick Start
 ```powershell
