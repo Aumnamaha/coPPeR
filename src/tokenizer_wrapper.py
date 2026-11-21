@@ -79,16 +79,20 @@ class CopperTokenizer:
     def decode(self, ids: list[int], skip_special_tokens: bool = True) -> str:
         """Decode a list of token IDs back to text.
 
-        Args:
-            ids: Token ID sequence.
-            skip_special_tokens: Remove special tokens before decoding.
+               Always passes all IDs through the native decoder so that Ċ (U+010A)
+               is correctly restored to
+        by the ByteLevel decoder.  Filtering
+               special tokens before decoding would remove Ċ and break newline
+               reconstruction, so we always use skip_special_tokens=False.
 
-        Returns:
-            Reconstructed string.
+               Args:
+                   ids: Token ID sequence.
+                   skip_special_tokens: Currently ignored — all IDs are passed through
+                       to the native ByteLevel decoder for correct newline handling.
+
+               Returns:
+                   Reconstructed string with newlines preserved.
         """
-        if skip_special_tokens:
-            keep = [i for i in ids if i >= len(SPECIAL_TOKENS)]
-            return self._tok.decode(keep, skip_special_tokens=False)
         return self._tok.decode(ids, skip_special_tokens=False)
 
     # ------------------------------------------------------------------
@@ -109,8 +113,8 @@ class CopperTokenizer:
         for msg in messages:
             role = msg["role"]
             content = msg.get("content", "")
-            parts.append(f"Ċ<|{role}|>\\n{content}")
-        return "".join(parts) + "ĊĊ"
+            parts.append(f"\u010a<|{role}|>\n{content}")
+        return "".join(parts) + "\u010c\u010c"
 
     # ------------------------------------------------------------------
     # SFT encoding with loss masking
@@ -147,7 +151,7 @@ class CopperTokenizer:
         labels = [-100] * len(all_ids)
 
         # Find the <|assistant|> marker in the token stream and mark from there
-        assistant_role_header = "Ċ<|assistant|>\\n"
+        assistant_role_header = "\u010a<|assistant|>\n"
         header_ids = self.encode(assistant_role_header, add_bos=False, add_eos=False)
 
         # Search for the header in all_ids

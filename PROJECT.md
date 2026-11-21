@@ -37,7 +37,13 @@ document data, designed for document reading, structured extraction, and documen
 - Trained ByteLevel BPE tokenizer with `vocab_size == 32768` and special tokens at IDs 0–9
 - Binary `.bin` packer producing `uint16` pretrain streams and `int32` SFT input/label arrays
 
-### [ ] Phase 4: From-scratch ~1B causal Transformer architecture & unit tests
+### [x] Phase 4: From-scratch ~1B causal Transformer architecture & unit tests
+- `CopperConfig` (~992M params) with RMSNorm, RoPE, GQA (3:1), SwiGLU
+- Full forward pass with shifted cross-entropy loss and `-100` ignore masking
+- Gradient checkpointing via `torch.utils.checkpoint` support
+- KV-cache autoregressive generation (`generate()`) verified equivalent to full forwards
+- Causal mask isolation, safetensors save/load roundtrip, lossless newline tokenizer roundtrip
+- 61 total tests passing (ruff + black clean)
 - Implement causal attention, RoPE, SwiGLU feedforward, RMSNorm
 - Unit tests for each architectural component
 - Correctness checks against reference implementations
