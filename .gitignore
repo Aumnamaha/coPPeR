@@ -1,13 +1,67 @@
+# ==========================================
+# coPPeR - Personal Build & Data Artifacts
+# ==========================================
+
+# Python virtual environments
 build/
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+
+# Data, Checkpoints, Exports (large binary artifacts)
 data/
 checkpoints/
 exports/
-__pycache__/
-.pytest_cache/
-.ruff_cache/
-*.pyc
+
+# Model weight formats
 *.gguf
 *.safetensors
-*.pt
 *.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.mlmodel
+
+# Environment / secrets
 .env
+.env.*
+!.env.example
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker (local-only, no images committed)
+.docker/
+
+# Jupyter notebooks (temporary work)
+*.ipynb
+.ipynb_checkpoints/
+
+# Windows PowerShell history
+PSHistory.txt
