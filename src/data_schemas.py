@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 
 DOC_CATEGORIES = [
     "invoice_receipt",
@@ -97,6 +98,72 @@ _FILLER_PREFIXES = (
 )
 
 
+def _extract_json_block(text: str):
+    """Extract a JSON object from text, handling fenced code blocks and wrapping."""
+    stripped = text.strip()
+
+    # Try direct parse first
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    # Try extracting from markdown code fences
+    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", stripped, re.DOTALL)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+
+    # Try finding the first { ... } block
+    brace_start = stripped.find("{")
+    if brace_start != -1:
+        brace_end = stripped.rfind("}")
+        if brace_end > brace_start:
+            try:
+                return json.loads(stripped[brace_start : brace_end + 1])
+            except json.JSONDecodeError:
+                pass
+
+    return None
+
+
+def _normalize_tool_key(parsed: dict) -> dict:
+    """Normalize tool call keys by mapping aliases to 'tool' and 'args'.
+
+    Common teacher-model aliases: 'action', 'name', 'function' -> 'tool';
+    'parameters', 'input', 'arguments' -> 'args'.
+    """
+    if "tool" in parsed and isinstance(parsed.get("args"), dict):
+        return parsed  # already canonical
+
+    tool_aliases = {"action", "name", "function"}
+    args_aliases = {"parameters", "input", "arguments"}
+
+    tool_key = None
+    for alias in tool_aliases:
+        if alias in parsed and isinstance(parsed[alias], str):
+            tool_key = alias
+            break
+
+    args_key = None
+    for alias in args_aliases:
+        if alias in parsed and isinstance(parsed[alias], dict):
+            args_key = alias
+            break
+
+    if tool_key is not None and args_key is not None:
+        normalized = {"tool": parsed[tool_key], "args": parsed[args_key]}
+        # Preserve any additional keys
+        for k, v in parsed.items():
+            if k not in (tool_key, args_key):
+                normalized[k] = v
+        return normalized
+
+    return None
+
+
 def validate_teacher_output(task_name: str, output_text: str) -> tuple:
     """Validate teacher agent output for a given task.
 
@@ -119,13 +186,45 @@ def validate_teacher_output(task_name: str, output_text: str) -> tuple:
             assert isinstance(parsed, (dict, list)), "not dict/list"
             return True, "valid JSON"
         except (json.JSONDecodeError, AssertionError) as exc:
+            # Try extracting JSON from code fences or wrapping text
+            extracted = _extract_json_block(stripped)
+            if extracted is not None and isinstance(extracted, (dict, list)):
+                return True, "valid JSON (extracted)"
             return False, f"invalid JSON: {exc}"
 
     if task_name == "markdown_table_refactor":
+        # Extract content from fenced code blocks if present
+        extract = stripped
+        if "```" in stripped:
+            parts = stripped.split("```")
+            for p in parts:
+                p = p.strip()
+                if "|" in p or "---" in p:
+                    extract = p
+                    break
+
         # Must contain at least one pipe character for table formatting
-        if "|" not in stripped and "---" not in stripped:
+        if "|" not in extract and "---" not in extract:
             return False, "no table markers found (| or ---)"
-        return True, "has table markers"
+
+        # Validate that there is at least one proper table row (pipe-delimited)
+        lines = [l.strip() for l in extract.splitlines() if l.strip()]
+        pipe_rows = [
+            l
+            for l in lines
+            if ("|" in l and not all(c in "-: " for c in l.replace("|", "")))
+            or (l.startswith("|") and "|" in l[1:])
+        ]
+        sep_rows = [
+            l for l in lines if all(c in "-: |" for c in l) and "-" in l and len(l) > 2
+        ]
+
+        # Accept if there is at least one data row OR a separator row
+        has_table_structure = (len(pipe_rows) >= 1) or (len(sep_rows) >= 1)
+        if not has_table_structure:
+            return False, "no valid table rows found"
+
+        return True, f"valid markdown table ({len(pipe_rows)} data rows)"
 
     if task_name == "grounded_qa_with_not_found":
         # NOT_FOUND is a valid answer; otherwise any non-empty text > 1 char is OK
@@ -144,10 +243,17 @@ def validate_teacher_output(task_name: str, output_text: str) -> tuple:
     # Editor tool call: must parse as JSON dict with valid tool name and args dict
     if task_name == "editor_tool_call":
         try:
-            parsed = json.loads(stripped)
-            assert isinstance(parsed, dict), "not a dict"
-            assert "tool" in parsed, 'missing "tool" key'
-            assert "args" in parsed, 'missing "args" key'
+            parsed = _extract_json_block(stripped)
+            if parsed is None or not isinstance(parsed, dict):
+                return False, "invalid editor_tool_call JSON"
+
+            # Normalize aliases (action/name/function -> tool; parameters/arguments -> args)
+            normalized = _normalize_tool_key(parsed)
+            if normalized is None:
+                return False, 'missing "tool" and/or "args" keys'
+
+            parsed = normalized
+
             assert isinstance(parsed["args"], dict), '"args" must be a dict'
             assert (
                 parsed["tool"] in _VALID_TOOL_NAMES

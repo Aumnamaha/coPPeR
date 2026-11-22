@@ -172,16 +172,23 @@ def _run_pytorch_inference(messages: list[dict], max_new_tokens: int = 128) -> s
     device = next(_model.parameters()).device
     input_tensor = torch.tensor([input_ids], dtype=torch.long).to(device)
 
+    # Resolve and ban the <|unk|> token ID during decoding
+    unk_id = tokenizer.token_to_id("<|unk|>")
     with torch.no_grad():
         outputs = _model.generate(
             input_tensor,
             max_new_tokens=max_new_tokens,
             temperature=0.0,  # greedy for deterministic editing
             eos_token_id=tokenizer.eos_token_id,
+            ban_token_ids=[unk_id],
         )
 
     generated_ids = outputs[0][input_tensor.shape[1] :].tolist()
-    return tokenizer.decode(generated_ids)
+    result = tokenizer.decode(generated_ids)
+
+    # Strip any stray <|unk|> substrings from decoded text
+    result = result.replace("<|unk|>", "")
+    return result
 
 
 def _run_llama_cpp_proxy(prompt: str, max_new_tokens: int = 128) -> str:

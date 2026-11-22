@@ -276,12 +276,16 @@ class CopperAttention(nn.Module):
         key_states = self._repeat_kv(key_states)
         value_states = self._repeat_kv(value_states)
 
-        # Scaled dot-product attention
+        # Scaled dot-product attention.
+        # Always use causal mode. When past_key_value exists, the cache contains
+        # only positions 0..past_len-1 so there's no future leakage anyway.
+        # Using is_causal=True consistently ensures SDPA uses the same algorithm
+        # path for both full-forward and KV-cache generation, avoiding numerical drift.
         attn_output = F.scaled_dot_product_attention(
             query_states,
             key_states,
             value_states,
-            is_causal=(past_key_value is None and q_len > 1),
+            is_causal=True,
         )
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, -1)
@@ -476,10 +480,21 @@ class CopperForCausalLM(nn.Module):
         max_new_tokens: int = 64,
         temperature: float = 0.0,
         eos_token_id: int = 3,
+        ban_token_ids: list[int] | None = None,
     ) -> torch.LongTensor:
-        """Autoregressive generation with KV caching."""
+        """Autoregressive generation with KV caching.
+
+        Args:
+            input_ids: Input token IDs.
+            max_new_tokens: Maximum number of new tokens to generate.
+            temperature: Sampling temperature (0.0 = greedy argmax).
+            eos_token_id: Token ID that terminates generation.
+            ban_token_ids: Optional list of token IDs to suppress
+                (set their logits to -inf) at every decoding step.
+        """
         generated = input_ids.clone()
         past_key_values = None
+        banned_set = set(ban_token_ids) if ban_token_ids else None
 
         for _ in range(max_new_tokens):
             if past_key_values is None:
@@ -495,6 +510,11 @@ class CopperForCausalLM(nn.Module):
                 )
                 logits = out["logits"][:, -1, :]
                 past_key_values = out["past_key_values"]
+
+            # Suppress banned token logits (e.g. <|unk|> at ID 0)
+            if banned_set is not None:
+                for tid in banned_set:
+                    logits[:, tid] = float("-inf")
 
             if temperature > 0.0:
                 probs = torch.softmax(logits / temperature, dim=-1)

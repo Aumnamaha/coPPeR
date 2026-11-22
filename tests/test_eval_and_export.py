@@ -365,3 +365,65 @@ class TestBFloat16CheckpointExport:
         # Verify magic and version
         assert data[:4] == b"GGUF", "Missing GGUF magic bytes"
         assert int.from_bytes(data[4:8], "little") == 3, "Expected GGUF v3"
+
+
+class TestAugmentMissingSkills:
+    """Verify augment_missing_skills.py generates valid ChatML records."""
+
+    def test_augment_script_produces_valid_records(self):
+        root = Path(__file__).resolve().parent.parent
+        # Import src modules
+        sys.path.insert(0, str(root / "src"))
+        # Use importlib to load scripts directly from path
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "augment_missing_skills",
+            root / "scripts" / "augment_missing_skills.py",
+        )
+        aug_mod = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(root / "src"))
+        spec.loader.exec_module(aug_mod)
+
+        _gen_markdown_table_refactor = aug_mod._gen_markdown_table_refactor
+        _gen_editor_tool_call = aug_mod._gen_editor_tool_call
+        _create_synthetic_table = aug_mod._create_synthetic_table
+        import json
+
+        from src.data_schemas import validate_teacher_output
+
+        sample_doc = (
+            "Revenue breakdown: Q1 2024 showed strong growth across all product lines."
+        )
+        doc_id = "test_aug_001"
+
+        # Test markdown_table_refactor generation
+        rec_mr = _gen_markdown_table_refactor(sample_doc, doc_id)
+        assert rec_mr is not None, "markdown_table_refactor record should be generated"
+        assert "messages" in rec_mr
+        assert len(rec_mr["messages"]) == 3
+        assert rec_mr["meta"]["task"] == "markdown_table_refactor"
+
+        # Validate the assistant output passes schema validation
+        assistant_text = rec_mr["messages"][2]["content"]
+        valid, reason = validate_teacher_output(
+            "markdown_table_refactor", assistant_text
+        )
+        assert valid, f"Augmented table should pass validation: {reason}"
+
+        # Test editor_tool_call generation
+        rec_ec = _gen_editor_tool_call(sample_doc, doc_id)
+        assert rec_ec is not None, "editor_tool_call record should be generated"
+        assert "messages" in rec_ec
+        assert len(rec_ec["messages"]) == 3
+        assert rec_ec["meta"]["task"] == "editor_tool_call"
+
+        # Validate the assistant output passes schema validation
+        assistant_text = rec_ec["messages"][2]["content"]
+        valid, reason = validate_teacher_output("editor_tool_call", assistant_text)
+        assert valid, f"Augmented tool call should pass validation: {reason}"
+
+        # Verify the JSON in assistant output is parseable and has correct structure
+        parsed = json.loads(assistant_text)
+        assert "tool" in parsed or "action" in parsed
+        assert isinstance(parsed.get("args", {}), dict)
