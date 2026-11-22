@@ -1,10 +1,12 @@
 """Distill teacher labels from agy.exe for coPPeR training data."""
 
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -33,17 +35,29 @@ def run_agy(prompt_text, timeout=120):
     ]
     try:
         result = subprocess.run(
-            cmd, check=False, capture_output=True, text=True, timeout=timeout
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
         )
-        if result.returncode != 0 and not result.stdout.strip():
+        stdout = (result.stdout or "").strip()
+        if result.returncode != 0 and not stdout:
             # Fallback: try without --output-format json (text mode)
             cmd2 = [agy_path, AGY_PRINT_FLAG, prompt_text]
             result = subprocess.run(
-                cmd2, check=False, capture_output=True, text=True, timeout=timeout
+                cmd2,
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
             )
-        return result.stdout.strip(), result.returncode == 0 or bool(
-            result.stdout.strip()
-        )
+            stdout = (result.stdout or "").strip()
+        return stdout, result.returncode == 0 or bool(stdout)
     except subprocess.TimeoutExpired:
         return "", False
     except FileNotFoundError:
@@ -69,6 +83,12 @@ def main():
     parser.add_argument("--max-docs", type=int, default=None)
     parser.add_argument("--eval-ratio", type=float, default=0.05)
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of parallel agy.exe workers (default: 4)",
+    )
     args = parser.parse_args()
 
     # Update agy path in env
@@ -95,71 +115,79 @@ def main():
     if args.max_docs is not None:
         docs = docs[: args.max_docs]
 
-    print(f"Loaded {len(docs)} documents. Distilling teacher labels...")
+    total_tasks = len(docs) * len(TASK_TEMPLATES)
+    print(
+        f"Loaded {len(docs)} documents. Distilling teacher labels with {args.workers} workers...",
+        flush=True,
+    )
+    print(f"Total (doc x task) pairs: {total_tasks}", flush=True)
 
-    train_records = []
-    eval_records = []
-    accepted = 0
-    rejected = 0
-    seen_hashes = set()
+    # Shared state protected by lock for parallel workers
+    _seen_hashes = set()
+    _records_lock = threading.Lock()
+    _accepted_count = 0
+    _rejected_count = 0
+    _train_records_local = []
+    _eval_records_local = []
 
-    for i, doc in enumerate(docs):
-        doc_id = doc.get("doc_id", f"unknown_{i}")
+    def _process_one(doc_idx, total_docs, doc, task_name):
+        """Process a single (doc, task) pair. Returns status string."""
+        nonlocal _accepted_count, _rejected_count
+        doc_id = doc.get("doc_id", f"unknown_{doc_idx}")
         content = doc.get("content", "")
         sys_prompt = doc.get("system_prompt", "You are a gold-standard teacher agent.")
 
         if not content:
-            print(f"[{i+1}/{len(docs)}] {doc_id}: empty content, skipping")
-            continue
+            return "skip"
 
-        for task_name in TASK_TEMPLATES:
-            # Build user prompt with doc context
-            if task_name == "json_extraction":
-                fields = "title,date,amount,person"
-                template_str = TASK_TEMPLATES[task_name]
-                user_prompt = f"{template_str.format(fields=fields)}\n\n--- DOCUMENT ---\n{content}"
-            elif task_name == "targeted_section_edit":
-                section = "Introduction"
-                instructions = "Improve clarity and fix any typos."
-                template_str = TASK_TEMPLATES[task_name]
-                user_prompt = f"{template_str.format(section=section, instructions=instructions)}\n\n--- DOCUMENT ---\n{content}"
-            else:
-                user_prompt = (
-                    f"{TASK_TEMPLATES[task_name]}\n\n--- DOCUMENT ---\n{content}"
-                )
-
-            # Run agy.exe
-            output_text, success = run_agy(user_prompt, timeout=args.timeout)
-
-            if not success or not output_text:
-                rejected += 1
-                continue
-
-            # Validate output
-            is_valid, reason = validate_teacher_output(task_name, output_text)
-            if not is_valid:
-                rejected += 1
-                print(f"  REJECTED [{doc_id}/{task_name}]: {reason}", file=sys.stderr)
-                continue
-
-            accepted += 1
-
-            # Deduplication by hash of the full record content
-            rec = format_chatml_record(
-                sys_prompt,
-                user_prompt,
-                output_text,
-                {
-                    "doc_id": doc_id,
-                    "category": doc.get("category", ""),
-                    "task": task_name,
-                },
+        # Build user prompt with doc context
+        if task_name == "json_extraction":
+            fields = "title,date,amount,person"
+            template_str = TASK_TEMPLATES[task_name]
+            user_prompt = (
+                f"{template_str.format(fields=fields)}\n\n--- DOCUMENT ---\n{content}"
             )
-            rec_hash = content_hash(json.dumps(rec["messages"], ensure_ascii=False))
+        elif task_name == "targeted_section_edit":
+            section = "Introduction"
+            instructions = "Improve clarity and fix any typos."
+            template_str = TASK_TEMPLATES[task_name]
+            user_prompt = f"{template_str.format(section=section, instructions=instructions)}\n\n--- DOCUMENT ---\n{content}"
+        else:
+            user_prompt = f"{TASK_TEMPLATES[task_name]}\n\n--- DOCUMENT ---\n{content}"
 
-            if rec_hash in seen_hashes:
-                continue  # duplicate -- skip
-            seen_hashes.add(rec_hash)
+        # Run agy.exe
+        output_text, success = run_agy(user_prompt, timeout=args.timeout)
+
+        if not success or not output_text:
+            with _records_lock:
+                _rejected_count += 1
+            return "reject"
+
+        # Validate output
+        is_valid, reason = validate_teacher_output(task_name, output_text)
+        if not is_valid:
+            with _records_lock:
+                _rejected_count += 1
+            print(f"  REJECTED [{doc_id}/{task_name}]: {reason}", file=sys.stderr)
+            return "reject"
+
+        # Deduplication by hash of the full record content
+        rec = format_chatml_record(
+            sys_prompt,
+            user_prompt,
+            output_text,
+            {
+                "doc_id": doc_id,
+                "category": doc.get("category", ""),
+                "task": task_name,
+            },
+        )
+        rec_hash = content_hash(json.dumps(rec["messages"], ensure_ascii=False))
+
+        with _records_lock:
+            if rec_hash in _seen_hashes:
+                return "dup"
+            _seen_hashes.add(rec_hash)
 
             # Deterministic split by doc_id hash
             split_key = int(content_hash(doc_id), 16) % 100
@@ -168,15 +196,46 @@ def main():
             rec["meta"]["split"] = target_set
             record_line = json.dumps(rec, ensure_ascii=False)
 
+            _accepted_count += 1
             if target_set == "eval":
-                eval_records.append(record_line)
+                _eval_records_local.append(record_line)
             else:
-                train_records.append(record_line)
+                _train_records_local.append(record_line)
+        return "accept"
 
-        print(
-            f"[{i+1}/{len(docs)}] {doc_id}: accepted={accepted} rejected={rejected}",
-            flush=True,
-        )
+    # Build all (doc_idx, doc, task_name) tuples for empty-doc filtering
+    tasks = []
+    for i, doc in enumerate(docs):
+        if doc.get("content", ""):
+            for task_name in TASK_TEMPLATES:
+                tasks.append((i, len(docs), doc, task_name))
+
+    # Process with ThreadPoolExecutor (I/O-bound: subprocess calls)
+    processed = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {executor.submit(_process_one, *t): t for t in tasks}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:  # noqa: BLE001
+                print(f"Worker error: {exc}", file=sys.stderr)
+
+            processed += 1
+            # Progress report every doc's worth of tasks or at completion
+            if processed % max(1, len(docs)) == 0 or processed == total_tasks:
+                with _records_lock:
+                    print(
+                        f"Progress: {processed}/{total_tasks} tasks done "
+                        f"(accepted={_accepted_count}, rejected={_rejected_count})",
+                        flush=True,
+                    )
+
+    # Collect results under lock
+    with _records_lock:
+        train_records = list(_train_records_local)
+        eval_records = list(_eval_records_local)
+        accepted = _accepted_count
+        rejected = _rejected_count
 
     # Write outputs
     for path, records in [
@@ -185,7 +244,9 @@ def main():
     ]:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.writelines(r + "\n" for r in records)
+            for record_line in records:
+                f.write(record_line + "\n")
+                f.flush()
 
     print(f"\nDone. Accepted={accepted} Rejected={rejected}")
     print(f"Train records: {len(train_records)} -> {args.train_out}")

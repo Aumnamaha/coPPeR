@@ -56,6 +56,7 @@ def main() -> None:
     parser.add_argument("--doc-count", type=int, default=300)
     parser.add_argument("--max-distill-docs", type=int, default=300)
     parser.add_argument("--seq-len", type=int, default=2048)
+    parser.add_argument("--distill-workers", type=int, default=4)
     parser.add_argument("--skip-generate", action="store_true")
     parser.add_argument("--skip-distill", action="store_true")
     args = parser.parse_args()
@@ -66,9 +67,10 @@ def main() -> None:
     print("=" * 60)
     print("coPPeR Dataset Preparation Orchestrator")
     print("=" * 60)
-    print(f"  doc-count:        {args.doc_count}")
-    print(f"  max-distill-docs: {args.max_distill_docs}")
-    print(f"  seq-len:          {args.seq_len}")
+    print(f"  doc-count:         {args.doc_count}")
+    print(f"  max-distill-docs:  {args.max_distill_docs}")
+    print(f"  seq-len:           {args.seq_len}")
+    print(f"  distill-workers:   {args.distill_workers}")
     print(f"  skip-generate:    {args.skip_generate}")
     print(f"  skip-distill:     {args.skip_distill}")
 
@@ -102,6 +104,8 @@ def main() -> None:
             "data/distill/train.jsonl",
             "--eval-out",
             "data/distill/eval.jsonl",
+            "--workers",
+            str(args.distill_workers),
         ]
         all_ok &= run_step("Distill teacher labels (agy)", cmd)
 

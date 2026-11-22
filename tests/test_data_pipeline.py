@@ -210,6 +210,85 @@ def run_live_smoke(count=2, output_path="data/synthetic_docs/smoke_docs.jsonl"):
     return lines
 
 
+# ============================================================
+# Regression test: UTF-8 subprocess decoding & None stdout guard
+# ============================================================
+class TestRunAgyUTF8Handling:
+    """Verify run_agy handles non-cp1252 bytes and None stdout gracefully."""
+
+    @patch("scripts.distill_teacher.subprocess.run")
+    def test_utf8_bytes_with_0x9d_and_none_stdout(self, mock_run):
+        """Simulate agy.exe returning raw UTF-8 bytes including 0x9d (smart quote).
+
+        On Windows with cp1252 default encoding, byte 0x9d raises UnicodeDecodeError.
+        With encoding='utf-8', errors='replace' it becomes '\ufffd'.
+        Also verify that when stdout is None, we get '' not AttributeError.
+        """
+        from scripts.distill_teacher import run_agy
+
+        # Case 1: subprocess returns bytes with non-cp1252 characters
+        mock_run.side_effect = [
+            # First call (with --output-format json): success but has UTF-8 chars
+            type(
+                "Result",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": '{"result": "\u2014 \u201cquote\u201d \ufffd"}',
+                    "stderr": "",
+                },
+            )(),
+        ]
+
+        output, success = run_agy("test prompt with em-dash \u2014")
+        assert success is True
+        assert isinstance(output, str)
+        assert (
+            "quote" in output
+        )  # smart quotes replaced by U+FFFD but JSON still parseable
+
+    @patch("scripts.distill_teacher.subprocess.run")
+    def test_stdout_none_no_attribute_error(self, mock_run):
+        """When stdout is None (subprocess error), run_agy should return ('', False)."""
+        from scripts.distill_teacher import run_agy
+
+        mock_run.return_value = type(
+            "Result",
+            (),
+            {
+                "returncode": 1,
+                "stdout": None,
+                "stderr": "some error",
+            },
+        )()
+
+        output, success = run_agy("test prompt")
+        assert output == ""  # (None or "").strip() -> ""
+        assert success is False
+
+    @patch("scripts.distill_teacher.subprocess.run")
+    def test_run_agy_calls_with_utf8_encoding(self, mock_run):
+        """Verify subprocess.run is invoked with encoding='utf-8' and errors='replace'."""
+        from scripts.distill_teacher import run_agy
+
+        mock_run.return_value = type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"ok": true}',
+                "stderr": "",
+            },
+        )()
+
+        run_agy("test")
+
+        # Check first call had encoding and errors args
+        call_kwargs = mock_run.call_args_list[0][1]
+        assert call_kwargs.get("encoding") == "utf-8"
+        assert call_kwargs.get("errors") == "replace"
+
+
 if __name__ == "__main__":
     # Run live smoke when executed directly
     print("Running live 2-document smoke test...")
