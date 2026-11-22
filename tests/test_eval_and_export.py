@@ -244,3 +244,124 @@ class TestGGUFExport:
         assert (
             b"llama.embedding_length" in data
         ), "Missing llama embedding_length metadata"
+
+
+class TestBFloat16CheckpointExport:
+    """Verify export handles torch.bfloat16 tensors without TypeError."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path):
+        self.tmp_dir = tmp_path
+        import torch as _torch
+
+        from src.model import CopperConfig, CopperForCausalLM
+
+        cfg = CopperConfig(
+            vocab_size=256,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+        )
+        model = CopperForCausalLM(cfg)
+
+        # Save in bfloat16 dtype to match real training checkpoints
+        model = model.to(_torch.bfloat16)
+        ckpt_dir = self.tmp_dir / "bf16_ckpt"
+        model.save_pretrained(ckpt_dir)
+        self.ckpt_path = str(ckpt_dir)
+
+        # Create a minimal valid tokenizer.json using the tokenizers library
+        from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+
+        tok = Tokenizer(models.BPE(unk_token="<|unk|>"))
+        tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        tok.decoder = decoders.ByteLevel()
+        for i in range(64):
+            tok.add_tokens([f"<|tok_{i}|>"])
+        tok_path = self.tmp_dir / "tokenizer.json"
+        tok.save(str(tok_path))
+        self.tokenizer_path = str(tok_path)
+
+    def test_bf16_export_q8_0_all_tensors(self):
+        """Export a bfloat16 checkpoint via Q8_0 and verify all GGUF tensors are present."""
+        from pathlib import Path
+
+        from scripts.export_gguf import export_gguf
+
+        results = export_gguf(
+            checkpoint_dir=Path(self.ckpt_path),
+            tokenizer_path=Path(self.tokenizer_path),
+            out_dir=self.tmp_dir,
+            quantize="q8_0",
+        )
+
+        assert (
+            results["tensor_count"] == 21
+        ), f"Expected 21 tensors (embed+lm_head+norm+2*9) for 2-layer model, got {results['tensor_count']}"
+        assert results["file_size_bytes"] > 0
+
+        # Verify GGUF binary contains all expected tensor name prefixes
+        gguf_path = self.tmp_dir / "copper-1b-q8_0.gguf"
+        with open(str(gguf_path), "rb") as f:
+            data = f.read()
+
+        # Token embedding
+        assert b"token_embd.weight" in data, "Missing token_embd.weight tensor name"
+        # Output projection (lm_head)
+        assert b"output.weight" in data, "Missing output.weight tensor name"
+        # Output norm
+        assert b"output_norm.weight" in data, "Missing output_norm.weight tensor name"
+        # Layer 0 tensors
+        for comp in [
+            "attn_q",
+            "attn_k",
+            "attn_v",
+            "attn_output",
+            "ffn_gate",
+            "ffn_up",
+            "ffn_down",
+            "attn_norm",
+            "ffn_norm",
+        ]:
+            assert (
+                f"blk.0.{comp}.weight".encode() in data
+            ), f"Missing blk.0.{comp}.weight tensor name"
+        # Layer 1 tensors
+        for comp in [
+            "attn_q",
+            "attn_k",
+            "attn_v",
+            "attn_output",
+            "ffn_gate",
+            "ffn_up",
+            "ffn_down",
+        ]:
+            assert (
+                f"blk.1.{comp}.weight".encode() in data
+            ), f"Missing blk.1.{comp}.weight tensor name"
+
+    def test_bf16_export_f16_no_type_error(self):
+        """Export a bfloat16 checkpoint via F16 and verify no BFloat16 TypeError."""
+        from pathlib import Path
+
+        from scripts.export_gguf import export_gguf
+
+        results = export_gguf(
+            checkpoint_dir=Path(self.ckpt_path),
+            tokenizer_path=Path(self.tokenizer_path),
+            out_dir=self.tmp_dir,
+            quantize="f16",
+        )
+
+        assert results["tensor_count"] == 21
+        assert results["file_size_bytes"] > 0
+
+        gguf_path = self.tmp_dir / "copper-1b-f16.gguf"
+        with open(str(gguf_path), "rb") as f:
+            data = f.read()
+        assert len(data) > 100, "F16 GGUF file too small"
+        # Verify magic and version
+        assert data[:4] == b"GGUF", "Missing GGUF magic bytes"
+        assert int.from_bytes(data[4:8], "little") == 3, "Expected GGUF v3"

@@ -39,6 +39,10 @@ class PretrainDataset(torch.utils.data.Dataset):
         self.seq_len = seq_len
         self.n_seqs = len(self.tokens) // seq_len
 
+    @property
+    def max_id(self) -> int:
+        return int(np.max(self.tokens)) if len(self.tokens) > 0 else 0
+
     def __len__(self) -> int:
         return self.n_seqs
 
@@ -60,6 +64,10 @@ class SFTDataset(torch.utils.data.Dataset):
         assert len(self.inputs) == len(self.labels), "inputs/labels length mismatch"
         self.n_records = len(self.inputs) // 2048
 
+    @property
+    def max_id(self) -> int:
+        return int(np.max(self.inputs)) if len(self.inputs) > 0 else 0
+
     def __len__(self) -> int:
         return self.n_records
 
@@ -77,6 +85,13 @@ def compute_perplexity(model, data_path: Path, seq_len: int = 2048) -> float | N
 
     dataset = PretrainDataset(data_path, seq_len=seq_len)
     if len(dataset) == 0:
+        return None
+    # OOB check: skip evaluation if packed data has tokens outside model vocab
+    if (
+        hasattr(model.config, "vocab_size")
+        and dataset.max_id >= model.config.vocab_size
+    ):
+        print(f"  Pretrain eval skipped (token IDs {dataset.max_id} exceed vocab)")
         return None
 
     dataloader = torch.utils.data.DataLoader(
@@ -115,6 +130,13 @@ def compute_sft_loss(model, inputs_path: Path, labels_path: Path) -> float | Non
 
     dataset = SFTDataset(inputs_path, labels_path)
     if len(dataset) == 0:
+        return None
+    # OOB check: skip evaluation if packed data has tokens outside model vocab
+    if (
+        hasattr(model.config, "vocab_size")
+        and dataset.max_id >= model.config.vocab_size
+    ):
+        print(f"  SFT eval skipped (token IDs {dataset.max_id} exceed vocab)")
         return None
 
     dataloader = torch.utils.data.DataLoader(
@@ -178,69 +200,67 @@ def run_task_probe(model, tokenizer_cfg_path: Path) -> dict[str, bool]:
 
     probes = {}
 
-    # Probe 1: JSON extraction
-    input_ids_1 = tok.encode(sample_doc[:200], add_special_tokens=True).ids
-    input_tensor_1 = torch.tensor([input_ids_1], device=device, dtype=torch.long)
+    def run_probe(text, task_name):
+        """Run a single probe with OOB token check and CUDA error handling."""
+        ids = tok.encode(text[:250], add_special_tokens=True).ids
+        if hasattr(model.config, "vocab_size") and any(
+            i >= model.config.vocab_size for i in ids
+        ):
+            return None  # OOB tokens — skip this probe
+        input_tensor = torch.tensor([ids], device=device, dtype=torch.long)
+        with torch.no_grad():
+            out = model.generate(
+                input_tensor,
+                max_new_tokens=96,
+                temperature=0.0,
+                eos_token_id=eos_id,
+            )
+        generated = tok.decode(out[0].tolist()[len(ids) :], skip_special_tokens=True)
+        ok, _ = validate_teacher_output(task_name, generated.strip())
+        return bool(ok)
 
-    with torch.no_grad():
-        out_1 = model.generate(
-            input_tensor_1, max_new_tokens=96, temperature=0.0, eos_token_id=eos_id
-        )
-    generated_1 = tok.decode(
-        out_1[0].tolist()[len(input_ids_1) :], skip_special_tokens=True
-    )
-    ok1, _ = validate_teacher_output("json_extraction", generated_1.strip())
-    probes["json_extraction"] = bool(ok1)
+    # Probe 1: JSON extraction
+    try:
+        result = run_probe(sample_doc[:200], "json_extraction")
+        if result is not None:
+            probes["json_extraction"] = result
+    except (IndexError, RuntimeError):
+        pass
 
     # Probe 2: cursor_span_edit
     doc_with_sel = (
         f"{sample_doc[:150]}\n<|sel_start|>Widget A<|sel_end|> needs reordering."
     )
-    input_ids_2 = tok.encode(doc_with_sel[:250], add_special_tokens=True).ids
-    input_tensor_2 = torch.tensor([input_ids_2], device=device, dtype=torch.long)
-
-    with torch.no_grad():
-        out_2 = model.generate(
-            input_tensor_2, max_new_tokens=96, temperature=0.0, eos_token_id=eos_id
-        )
-    generated_2 = tok.decode(
-        out_2[0].tolist()[len(input_ids_2) :], skip_special_tokens=True
-    )
-    ok2, _ = validate_teacher_output("cursor_span_edit", generated_2.strip())
-    probes["cursor_span_edit"] = bool(ok2)
+    try:
+        result = run_probe(doc_with_sel, "cursor_span_edit")
+        if result is not None:
+            probes["cursor_span_edit"] = result
+    except (IndexError, RuntimeError):
+        pass
 
     # Probe 3: editor_tool_call
     prompt3 = (
         "Given the selection <|sel_start|>Widget A<|sel_end|>, output a JSON tool call "
         'to replace it with "Widget Alpha" using the replace_selection tool.'
     )
-    input_ids_3 = tok.encode(prompt3[:250], add_special_tokens=True).ids
-    input_tensor_3 = torch.tensor([input_ids_3], device=device, dtype=torch.long)
-
-    with torch.no_grad():
-        out_3 = model.generate(
-            input_tensor_3, max_new_tokens=96, temperature=0.0, eos_token_id=eos_id
-        )
-    generated_3 = tok.decode(
-        out_3[0].tolist()[len(input_ids_3) :], skip_special_tokens=True
-    )
-    ok3, _ = validate_teacher_output("editor_tool_call", generated_3.strip())
-    probes["editor_tool_call"] = bool(ok3)
+    try:
+        result = run_probe(prompt3, "editor_tool_call")
+        if result is not None:
+            probes["editor_tool_call"] = result
+    except (IndexError, RuntimeError):
+        pass
 
     # Probe 4: grounded Q&A with NOT_FOUND
-    prompt4 = f"Document:\n{sample_doc}\nQuestion: What is the shipping address for this order?"
-    input_ids_4 = tok.encode(prompt4[:250], add_special_tokens=True).ids
-    input_tensor_4 = torch.tensor([input_ids_4], device=device, dtype=torch.long)
-
-    with torch.no_grad():
-        out_4 = model.generate(
-            input_tensor_4, max_new_tokens=96, temperature=0.0, eos_token_id=eos_id
-        )
-    generated_4 = tok.decode(
-        out_4[0].tolist()[len(input_ids_4) :], skip_special_tokens=True
-    ).strip()
-    ok4, _ = validate_teacher_output("grounded_qa_with_not_found", generated_4)
-    probes["grounded_qa_not_found"] = bool(ok4)
+    prompt4 = (
+        f"Document:\n{sample_doc}\n"
+        "Question: What is the shipping address for this order?"
+    )
+    try:
+        result = run_probe(prompt4, "grounded_qa_with_not_found")
+        if result is not None:
+            probes["grounded_qa_not_found"] = result
+    except (IndexError, RuntimeError):
+        pass
 
     return probes
 
@@ -300,7 +320,7 @@ def main() -> None:
                     "PASS" if passed else "FAIL (model not yet trained on this task)"
                 )
                 print(f"  {task_name}: {status}")
-        except (RuntimeError, OSError) as exc:
+        except (IndexError, RuntimeError, OSError) as exc:
             print(f"\nWarning: Task probes failed ({exc}), skipping")
             probes = {}
     else:

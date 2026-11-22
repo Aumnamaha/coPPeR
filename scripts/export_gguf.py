@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from model import CopperConfig
@@ -245,11 +246,16 @@ def export_gguf(
     tensor_info = []  # (gguf_name, torch_tensor, dims, gguf_type)
 
     # Token embedding
-    if "model.embed_tokens.weight" in state_dict:
-        t = state_dict["model.embed_tokens.weight"]
+    if "embed_tokens.weight" in state_dict:
+        t = state_dict["embed_tokens.weight"]
         name = _tensor_name(0, "token_embd", config)
         tensor_info.append(
-            (name, t, [config.vocab_size, config.hidden_size], GGUF_TYPE_F16)
+            (
+                name,
+                t.to(torch.float32),
+                [config.vocab_size, config.hidden_size],
+                GGUF_TYPE_F16,
+            )
         )
 
     # Output projection (lm_head)
@@ -257,18 +263,25 @@ def export_gguf(
         t = state_dict["lm_head.weight"]
         name = _tensor_name(0, "output_proj", config)
         tensor_info.append(
-            (name, t, [config.vocab_size, config.hidden_size], GGUF_TYPE_F16)
+            (
+                name,
+                t.to(torch.float32),
+                [config.vocab_size, config.hidden_size],
+                GGUF_TYPE_F16,
+            )
         )
 
-    # Output norm (model.norm)
-    if "model.norm.weight" in state_dict:
-        t = state_dict["model.norm.weight"]
+    # Output norm (norm)
+    if "norm.weight" in state_dict:
+        t = state_dict["norm.weight"]
         name = _tensor_name(0, "output_norm", config)
-        tensor_info.append((name, t, [config.hidden_size], GGUF_TYPE_F16))
+        tensor_info.append(
+            (name, t.to(torch.float32), [config.hidden_size], GGUF_TYPE_F16)
+        )
 
     # Decoder layers
     for i in range(config.num_hidden_layers):
-        prefix = f"model.layers.{i}."
+        prefix = f"layers.{i}."
         layer_map = {
             "input_layernorm.weight": ("attn_norm",),
             "post_attention_layernorm.weight": ("ffn_norm",),
@@ -285,7 +298,7 @@ def export_gguf(
             full_key = prefix + key
             if full_key not in state_dict:
                 continue
-            t = state_dict[full_key]
+            t = state_dict[full_key].to(torch.float32)
             comp = components[0]
             name = _tensor_name(i, comp, config)
             dims = _tensor_dims(name, config)
@@ -398,7 +411,8 @@ def export_gguf(
 
     quantize_flag = "q8_0" if quantize == "q8_0" else None
     for name, t, dims, gguf_type in tensor_info:
-        arr = t.cpu().numpy()
+        # Convert to float32 first (bfloat16 not supported by NumPy)
+        arr = t.detach().to(torch.float32).cpu().numpy()
 
         if quantize_flag == "q8_0":
             raw_bytes = _quantize_q8_0(arr.astype(np.float16))
