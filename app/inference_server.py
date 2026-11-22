@@ -286,6 +286,9 @@ async def _stream_pytorch_responses(
     """Token-by-token SSE stream for PyTorch inference."""
     import torch
 
+    if _model is None:
+        raise RuntimeError("Model not loaded")
+
     tokenizer = _tokenizer
     if tokenizer is None:
         raise RuntimeError("Tokenizer not loaded")
@@ -480,6 +483,13 @@ async def chat_completions(req: ChatCompletionRequest):
     if req.stream:
         from fastapi.responses import StreamingResponse
 
+        # Guard: only stream when model is actually loaded
+        if _model is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Model not loaded. Set CHECKPOINT_DIR for PyTorch mode.",
+            )
+
         return StreamingResponse(
             _stream_pytorch_responses(
                 messages_dicts, req.max_new_tokens, req.temperature
@@ -562,6 +572,91 @@ async def edit_stream(req: ChatCompletionRequest):
         _stream_pytorch_responses(messages_dicts, req.max_new_tokens, req.temperature),
         media_type="text/event-stream",
     )
+
+
+# ---------------------------------------------------------------------------
+# Workspace UI — static file serving & API endpoints
+# ---------------------------------------------------------------------------
+
+_WORKSPACE_DIR = Path(__file__).resolve().parent / "workspace_ui"
+
+
+def _read_workspace_file(filename: str) -> bytes:
+    """Read a workspace asset file (index.html, styles.css, app.js)."""
+    path = _WORKSPACE_DIR / filename
+    if not path.exists():
+        return b"Not Found"
+    return path.read_bytes()
+
+
+@app.get("/workspace")
+async def serve_workspace_index() -> Any:
+    """Serve the main workspace HTML page."""
+    from fastapi.responses import Response
+
+    html = _read_workspace_file("index.html")
+    return Response(content=html, media_type="text/html; charset=utf-8")
+
+
+@app.get("/workspace/styles.css")
+async def serve_workspace_css() -> Any:
+    """Serve workspace CSS."""
+    from fastapi.responses import Response
+
+    css = _read_workspace_file("styles.css")
+    return Response(content=css, media_type="text/css; charset=utf-8")
+
+
+@app.get("/workspace/app.js")
+async def serve_workspace_js() -> Any:
+    """Serve workspace JavaScript."""
+    from fastapi.responses import Response
+
+    js = _read_workspace_file("app.js")
+    return Response(content=js, media_type="application/javascript; charset=utf-8")
+
+
+@app.post("/api/workspace/capture")
+async def api_capture() -> dict[str, Any]:
+    """Capture highlighted selection from the active window.
+
+    Returns JSON with `selection` text and `charCount`.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from editor_bridge import capture_highlighted_selection
+
+        result = capture_highlighted_selection()
+        selection_text = result.get("wrapped_document", "")
+        return {
+            "selection": selection_text,
+            "charCount": len(selection_text),
+            "filename": None,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Capture failed: {exc}") from exc
+
+
+@app.post("/api/workspace/apply")
+async def api_apply(req: dict[str, str]) -> dict[str, Any]:
+    """Apply edited text to the active editor window.
+
+    Accepts JSON body `{\"text\": \"...\"}`.
+    """
+    try:
+        text = req.get("text", "")
+        if not text:
+            raise HTTPException(status_code=400, detail="Missing 'text' field")
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from editor_bridge import apply_selection_replacement
+
+        ok = apply_selection_replacement(text)
+        return {"success": bool(ok)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Apply failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

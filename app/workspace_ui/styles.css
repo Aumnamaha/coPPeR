@@ -1,0 +1,197 @@
+/* ============================================================
+   coPPeR Workspace — Zephium-Inspired Split-Canvas UI
+   Aesthetic: #F4F7FB canvas, #FFFFFF rounded 20px cards,
+              #EBF1F8 soft pills, #1E293B crisp typography,
+              #2563EB / #0F172A accents.
+   ============================================================ */
+
+/* ---- Reset & Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%; width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #F4F7FB; color: #1E293B; line-height: 1.5; overflow: hidden;
+}
+
+/* ---- Split Layout ---- */
+.split-layout {
+  display: flex; height: 100vh; width: 100vw; overflow: hidden;
+}
+
+/* ===================== LEFT RAIL (AI Assistant) ===================== */
+.rail-left {
+  width: 360px; min-width: 360px; max-width: 360px;
+  display: flex; flex-direction: column;
+  background: #FFFFFF; border-right: 1px solid #E2E8F0;
+}
+
+/* Header */
+.rail-header {
+  padding: 16px 20px 12px; border-bottom: 1px solid #EBF1F8;
+}
+.brand-title {
+  font-size: 17px; font-weight: 700; color: #0F172A; margin-bottom: 8px; letter-spacing: -0.3px;
+}
+.rail-actions { display: flex; gap: 6px; }
+
+/* Pill buttons */
+.pill-btn {
+  padding: 5px 12px; border-radius: 999px; border: 1px solid #E2E8F0;
+  background: #FFFFFF; color: #475569; font-size: 12px; cursor: pointer;
+  transition: all .15s ease; white-space: nowrap;
+}
+.pill-btn:hover { background: #EBF1F8; border-color: #CBD5E1; }
+
+/* Chat Stream */
+.chat-stream {
+  flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;
+}
+.chat-stream::-webkit-scrollbar { width: 5px; }
+.chat-stream::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+
+/* User bubble */
+.user-bubble {
+  align-self: flex-end; max-width: 90%; padding: 8px 14px;
+  background: #FFFFFF; border-radius: 16px 16px 4px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); font-size: 13px; color: #334155;
+}
+
+/* AI response card */
+.ai-card {
+  align-self: flex-start; max-width: 95%; padding: 12px 16px;
+  background: linear-gradient(135deg, #F8FAFC 0%, #FFFFFF 100%);
+  border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.05); font-size: 13px; line-height: 1.6; color: #334155;
+}
+
+/* Point-back citation badge */
+.citation-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; background: #DBEAFE; color: #2563EB;
+  font-size: 11px; font-weight: 700; cursor: pointer; margin: 0 2px; vertical-align: middle;
+  transition: all .15s ease; user-select: none;
+}
+.citation-badge:hover, .citation-badge.active {
+  background: #2563EB; color: #FFFFFF; transform: scale(1.15);
+  box-shadow: 0 2px 8px rgba(37,99,235,.35);
+}
+
+/* ===================== PROMPT COMPOSER CARD ===================== */
+.composer-card {
+  padding: 12px 16px; border-top: 1px solid #EBF1F8; background: #FFFFFF;
+}
+
+/* Context chip */
+.chip-area { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; min-height: 0; }
+.context-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 8px;
+  background: #EBF1F8; border-radius: 999px; font-size: 11.5px; color: #475569; cursor: pointer;
+}
+.context-chip:hover { background: #DBEAFE; }
+.chip-remove {
+  width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; color: #94A3B8; cursor: pointer; line-height: 1;
+}
+.chip-remove:hover { background: #E2E8F0; color: #64748B; }
+
+.hidden { display: none !important; }
+
+/* Textarea */
+#prompt-input {
+  width: 100%; border: 1.5px solid #E2E8F0; border-radius: 12px; padding: 10px 14px;
+  font-size: 13px; resize: none; outline: none; transition: border-color .15s ease;
+  font-family: inherit; color: #1E293B; background: #FAFBFC; line-height: 1.5;
+}
+#prompt-input:focus { border-color: #2563EB; background: #FFFFFF; }
+
+/* Composer toolbar */
+.composer-toolbar {
+  display: flex; align-items: center; gap: 4px; margin-top: 8px; padding-top: 8px;
+}
+
+/* Toolbar buttons (circular) */
+.toolbar-btn, .send-btn {
+  width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; transition: all .15s ease; background: transparent; flex-shrink: 0;
+}
+.toolbar-btn:hover { background: #EBF1F8; }
+
+/* Model selector pill */
+.model-pill {
+  flex: 1; display: flex; align-items: center; gap: 3px; padding: 4px 10px;
+  border-radius: 999px; font-size: 11.5px; color: #475569; cursor: pointer; transition: all .15s ease;
+  background: transparent; user-select: none; justify-content: center;
+}
+.model-pill:hover { background: #EBF1F8; }
+
+/* Dropdown */
+.dropdown {
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  min-width: 200px; border-radius: 12px; background: #FFFFFF; box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: 6px; z-index: 100; border: 1px solid #E2E8F0;
+}
+.dropdown-item {
+  padding: 7px 12px; border-radius: 8px; font-size: 12.5px; cursor: pointer; transition: background .1s ease; color: #334155;
+}
+.dropdown-item:hover { background: #EBF1F8; }
+.dropdown-item.active { background: #DBEAFE; color: #2563EB; font-weight: 600; }
+
+/* Send button */
+.send-btn { background: #0F172A !important; }
+.send-btn:hover { background: #1E293B !important; transform: scale(1.08); }
+.send-btn svg path { fill: #FFFFFF; }
+
+/* ===================== RIGHT CANVAS (Document) ===================== */
+.canvas { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #F4F7FB; }
+
+/* Doc bar */
+.doc-bar {
+  padding: 10px 20px; border-bottom: 1px solid #E2E8F0; background: #FFFFFF; display: flex; align-items: center; gap: 16px;
+}
+.doc-title { font-size: 14px; font-weight: 600; color: #0F172A; white-space: nowrap; }
+
+/* Mode tabs */
+.mode-tabs { display: flex; gap: 2px; background: #EBF1F8; border-radius: 8px; padding: 2px; }
+.tab-btn {
+  padding: 4px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer;
+  color: #64748B; background: transparent; transition: all .15s ease; white-space: nowrap;
+}
+.tab-btn.active { background: #FFFFFF; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,.06); font-weight: 600; }
+
+/* Doc actions */
+.doc-actions { display: flex; gap: 8px; margin-left: auto; }
+.action-btn {
+  padding: 5px 14px; border-radius: 999px; border: 1.5px solid #E2E8F0; font-size: 12px; cursor: pointer; transition: all .15s ease; background: #FFFFFF; color: #475569;
+}
+.action-btn.keep { border-color: #2563EB; color: #2563EB; }
+.action-btn.keep:hover { background: #2563EB; color: #FFFFFF; }
+.action-btn.undo { border-color: #E2E8F0; }
+.action-btn.undo:hover { background: #FEE2E2; border-color: #FCA5A5; color: #DC2626; }
+
+/* Document content */
+.doc-content { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 0; }
+.doc-content::-webkit-scrollbar { width: 6px; }
+.doc-content::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+
+/* Doc blocks */
+.doc-block { padding: 8px 12px; border-radius: 10px; transition: all .2s ease; }
+.doc-block.numbered { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.doc-block:hover { background: rgba(255,255,255,.6); }
+
+/* Doc citation badge */
+.citation-badge.doc-badge {
+  width: 24px; height: 24px; font-size: 13px; flex-shrink: 0; margin-top: 2px; background: #F1F5F9; color: #64748B; border: 1.5px solid #E2E8F0;
+}
+.citation-badge.doc-badge.highlighted {
+  background: #FEF3C7; color: #D97706; border-color: #FBBF24; box-shadow: 0 0 12px rgba(251,191,36,.4); transform: scale(1.2);
+}
+
+/* ===================== SPLIT DIFF VIEW ===================== */
+.split-diff { flex: 1; display: flex; overflow: hidden; padding: 0; }
+.diff-pane { flex: 1; overflow-y: auto; padding: 20px; transition: background .2s ease; }
+.diff-pane.original { background: #FFFFFF; border-right: 1px solid #E2E8F0; }
+.diff-pane.proposed { background: #FAFFFE; }
+.diff-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #94A3B8; margin-bottom: 12px; font-weight: 600; }
+.diff-pane pre { white-space: pre-wrap; word-break: break-word; font-family: "SF Mono", "Cascadia Code", "Fira Code", monospace; font-size: 13px; line-height: 1.7; color: #334155; }
+.diff-divider { display: flex; align-items: center; justify-content: center; width: 40px; background: #EBF1F8; }
+.plus-icon { font-size: 20px; font-weight: 700; color: #94A3B8; }
