@@ -1,54 +1,8 @@
-PERSONAL SOFTWARE LICENSE (ALL RIGHTS RESERVED)
-
 Copyright (c) 2026 Thirunagari Aum Namaha. All Rights Reserved.
 
-This software, including but not limited to the coPPeR project, its source code,
-model architecture, trained weights, inference scripts, documentation, and all
-associated files (collectively, the "Software"), is the exclusive property of
-Thirunagari Aum Namaha ("the Author").
+The source code, documentation, and associated artifacts contained in this repository 
+are published exclusively for portfolio evaluation, academic review, and reference.
 
-1. GRANT OF LICENSE
-   The Author grants a limited, non-exclusive, non-transferable, revocable license
-   to use the Software solely for personal, private, and non-commercial purposes.
-   This includes running, studying, and modifying the Software on machines owned or
-   controlled by the Author.
-
-2. RESTRICTIONS
-   No person is permitted to:
-   (a) Copy, reproduce, distribute, sublicense, publish, upload, host, transmit,
-       or share any part of the Software in any form whatsoever;
-   (b) Modify, create derivative works from, reverse engineer, decompile, or
-       disassemble any portion of the Software;
-   (c) Use the Software, its model weights, or any derived outputs for commercial,
-       business, educational, public, or third-party purposes without prior written
-       permission from the Author;
-   (d) Sell, rent, lease, loan, or otherwise commercially exploit the Software or
-       any portion thereof.
-
-3. INTELLECTUAL PROPERTY
-   All intellectual property rights in and to the Software, including all model
-   architectures, training methodologies, weights, tokenizers, and documentation,
-   remain the sole and exclusive property of Thirunagari Aum Namaha. Nothing in
-   this license grants any right to use the Author's name, trademarks, or logos
-   except as reasonably necessary to comply with Section 1 (personal use).
-
-4. DISCLAIMER OF WARRANTIES
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-   AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT
-   OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-   SOFTWARE.
-
-5. TERMINATION
-   This license is effective until terminated. The Author may terminate this
-   license at any time without notice. Upon termination, the licensee must destroy
-   all copies of the Software and cease all use thereof.
-
-6. GOVERNING LAW
-   This License shall be governed by and construed in accordance with the laws of
-   India, without regard to its conflict of law provisions. Any disputes arising
-   from this License shall be resolved exclusively in the courts located in
-   Visakhapatnam, Andhra Pradesh, India.
-
-END OF LICENSE
+No permission or license is granted to copy, modify, merge, publish, distribute,
+sublicense, sell, or execute this software for any purpose—commercial or non-commercial—
+without explicit prior written permission from the copyright owner (Thirunagari Aum Namaha).

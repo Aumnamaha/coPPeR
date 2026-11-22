@@ -232,9 +232,7 @@ python app/desktop_overlay.py
 
 This project is licensed under a **Personal Software License (All Rights Reserved)**.
 
-Copyright (c) 2026 Thirunagari Aum Namaha. All Rights Reserved.
-
-The software, model weights, and associated documentation are for the **personal, private use** of the author only. No copying, distribution, modification, or commercial use is permitted without prior written permission. See `LICENSE` for full terms.
+See [`LICENSE`](LICENSE) for full terms.
 
 ---
 
