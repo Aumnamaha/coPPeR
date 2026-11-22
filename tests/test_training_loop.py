@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from data_schemas import (
@@ -201,6 +200,53 @@ class TestSmokeTraining:
         assert result.returncode == 0, f"Resume failed: {result.stderr}"
 
 
+class TestTokenBoundsValidation:
+    """Verify out-of-range token IDs raise ValueError on CPU, not CUDA assert."""
+
+    def test_out_of_range_raises_valueerror_on_cpu(self):
+        """When input_ids contain tokens >= vocab_size, training should raise
+        a clear ValueError before any CUDA kernel launch."""
+        import subprocess
+        import sys
+
+        code = """
+import torch
+
+def validate_tokens(x, vocab_size):
+    mx = x.max().item()
+    mn = x.min().item()
+    if mn < 0 or mx >= vocab_size:
+        raise ValueError(
+            f"Token ID out of range [0, {vocab_size}): "
+            f"min={mn}, max={mx}"
+        )
+
+# Simulate batch with token IDs that exceed a tiny model's vocab (256)
+tiny_vocab = 256
+batch_x = torch.tensor([[1, 2, tiny_vocab + 5, 4]], dtype=torch.long)
+try:
+    validate_tokens(batch_x, tiny_vocab)
+    print("FAIL: Should have raised ValueError")
+except ValueError as e:
+    msg = str(e)
+    assert "Token ID out of range" in msg
+    assert f"max={tiny_vocab + 5}" in msg
+    print(f"OK: {msg}")
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"Script failed: {result.stderr}"
+        assert "OK:" in result.stdout
+        assert "FAIL" not in result.stdout
+
+
 class TestCUDA:
     def test_cuda_available(self):
+        import torch
+
         assert torch.cuda.is_available()

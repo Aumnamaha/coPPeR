@@ -91,6 +91,14 @@ def pack_pretrain(
 
     # Trim to fit exact multiple of seq_len
     trimmed = all_ids[: num_sequences * seq_len]
+    vocab_size = tokenizer._tok.get_vocab_size()
+    if len(trimmed) > 0:
+        max_id = max(trimmed)
+        if max_id >= vocab_size:
+            raise ValueError(
+                f"Token ID {max_id} exceeds vocab_size ({vocab_size}). "
+                f"This will cause a CUDA 'index out of bounds' error at training time."
+            )
     flat = np.array(trimmed, dtype=np.uint16)
 
     meta = {
@@ -148,10 +156,20 @@ def pack_sft(
     inputs_arr = np.zeros((num_records, seq_len), dtype=np.uint16)
     labels_arr = np.full((num_records, seq_len), -100, dtype=np.int32)
 
+    vocab_size_sft = tokenizer._tok.get_vocab_size()
+
     for i, record in enumerate(records):
         input_ids, labels = tokenizer.encode_sft_example(
             record["messages"], max_seq_len=seq_len
         )
+
+        # Validate input IDs are within vocab range (labels may contain -100)
+        if any(t >= vocab_size_sft for t in input_ids):
+            bad = [t for t in input_ids if t >= vocab_size_sft]
+            raise ValueError(
+                f"SFT record {i}: token ID(s) {bad[:5]}... exceed vocab_size ({vocab_size_sft}). "
+                f"This will cause a CUDA 'index out of bounds' error at training time."
+            )
 
         n = len(input_ids)
         inputs_arr[i, :n] = input_ids[:seq_len]

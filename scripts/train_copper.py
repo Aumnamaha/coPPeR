@@ -273,6 +273,17 @@ def run_stage_pretrain(
     losses_recorded: list[float] = []
     peak_vram = 0.0
 
+    # Validate token ID bounds before any CUDA transfer
+    vocab_size = model.config.vocab_size if hasattr(model, "config") else 32768
+
+    def _validate_tokens(x: torch.Tensor) -> None:
+        mx = x.max().item()
+        mn = x.min().item()
+        if mn < 0 or mx >= vocab_size:
+            raise ValueError(
+                f"Token ID out of range [0, {vocab_size}): " f"min={mn}, max={mx}"
+            )
+
     pbar = tqdm(range(steps), desc="Pretrain", initial=start_step)
     for _ in pbar:
         try:
@@ -280,6 +291,9 @@ def run_stage_pretrain(
         except (NameError, StopIteration):
             data_loader_iter = iter(dataloader)
             batch_x, batch_y = next(data_loader_iter)
+
+        # CPU bounds check before transferring to CUDA
+        _validate_tokens(batch_x)
 
         optimizer.zero_grad(set_to_none=True)
         loss_val = train_step_causal_lm(
@@ -369,6 +383,18 @@ def run_stage_sft(
     losses_recorded: list[float] = []
     peak_vram = 0.0
 
+    # Validate token ID bounds before any CUDA transfer
+    vocab_size_sft = model.config.vocab_size if hasattr(model, "config") else 32768
+
+    def _validate_tokens_sft(x: torch.Tensor) -> None:
+        mx = x.max().item()
+        mn = x.min().item()
+        # Labels can contain -100 (ignore_index); only validate input_ids >= 0
+        if mn < 0 or mx >= vocab_size_sft:
+            raise ValueError(
+                f"Token ID out of range [0, {vocab_size_sft}): " f"min={mn}, max={mx}"
+            )
+
     data_loader_iter = iter(dataloader)
     pbar = tqdm(range(steps), desc="SFT", initial=start_step)
     for _ in pbar:
@@ -377,6 +403,9 @@ def run_stage_sft(
         except StopIteration:
             data_loader_iter = iter(dataloader)
             batch_x, batch_y = next(data_loader_iter)
+
+        # CPU bounds check before transferring to CUDA (validate inputs only; labels may have -100)
+        _validate_tokens_sft(batch_x)
 
         optimizer.zero_grad(set_to_none=True)
         loss_val = train_step_sft(
@@ -453,7 +482,7 @@ def main() -> None:
     if args.smoke:
         print("=== SMOKE MODE (tiny 2-layer model, 6 steps per stage) ===")
         cfg = CopperConfig(
-            vocab_size=1024,
+            vocab_size=32768,  # match tokenizer; only +~2 MB embedding for tiny model
             hidden_size=64,
             intermediate_size=128,
             num_hidden_layers=2,
