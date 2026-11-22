@@ -8,6 +8,7 @@ and applies surgical span replacements in-place.
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import json
 import platform
 import subprocess

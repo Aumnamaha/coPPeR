@@ -254,3 +254,15 @@ class TestDesktopOverlaySmoke:
 
     def test_overlay_module_importable(self):
         import app.desktop_overlay  # noqa: F401
+
+
+class TestCtypesWintypesImport:
+    """Verify ctypes.wintypes is imported so editor_bridge loads without AttributeError."""
+
+    def test_import_editor_bridge_and_desktop_overlay_no_error(self):
+        """Both modules must import cleanly — no missing ctypes.wintypes."""
+        import app.desktop_overlay as _desktop_mod
+        import app.editor_bridge as _bridge_mod
+
+        assert _desktop_mod is not None
+        assert _bridge_mod is not None
