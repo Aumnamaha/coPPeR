@@ -208,6 +208,17 @@ def main() -> None:
         help="SFT evaluation ChatML JSONL file (optional).",
     )
     parser.add_argument(
+        "--extra-sft-jsonl",
+        nargs="*",
+        default=None,
+        help="Extra SFT JSONL files to merge into training set. Defaults to data/distill/aug_skills.jsonl if present.",
+    )
+    parser.add_argument(
+        "--no-extra-sft",
+        action="store_true",
+        help="Disable auto-merging of aug_skills.jsonl even when it exists.",
+    )
+    parser.add_argument(
         "--out-dir",
         type=str,
         default="data/packed",
@@ -260,11 +271,49 @@ def main() -> None:
             f"{pretrain_meta['num_sequences']} sequences -> pretrain_train.bin"
         )
 
-    # --- SFT pack (train) ---
+    # --- SFT pack (train) with optional extra JSONL merge ---
     if args.sft_train_jsonl and Path(args.sft_train_jsonl).exists():
-        sft_inputs, sft_labels, sft_train_meta = pack_sft(
-            args.sft_train_jsonl, tokenizer, args.seq_len
-        )
+        # Collect all SFT JSONL sources
+        sft_sources: list[str] = [args.sft_train_jsonl]
+
+        # Auto-merge aug_skills.jsonl when present unless --no-extra-sft is set
+        if not args.no_extra_sft:
+            if args.extra_sft_jsonl:
+                for extra in args.extra_sft_jsonl:
+                    ep = Path(extra)
+                    if ep.exists():
+                        sft_sources.append(str(ep))
+                        print(f"Including extra SFT source: {extra}")
+                    else:
+                        print(f"Extra SFT source not found (skipped): {extra}")
+            elif Path("data/distill/aug_skills.jsonl").exists():
+                sft_sources.append("data/distill/aug_skills.jsonl")
+                print(
+                    "Auto-including data/distill/aug_skills.jsonl (--no-extra-sft to disable)"
+                )
+
+        # Pack each source and concatenate into combined arrays
+        all_inputs: list[np.ndarray] = []
+        all_labels: list[np.ndarray] = []
+        total_records = 0
+
+        for src in sft_sources:
+            src_inputs, src_labels, src_meta = pack_sft(src, tokenizer, args.seq_len)
+            n = src_meta["num_records"]
+            print(f"  {src}: {n} records")
+            all_inputs.append(src_inputs)
+            all_labels.append(src_labels)
+            total_records += n
+
+        # Concatenate along record axis (axis=0)
+        if len(all_inputs) == 1:
+            sft_inputs = all_inputs[0]
+            sft_labels = all_labels[0]
+        else:
+            sft_inputs = np.concatenate(all_inputs, axis=0)
+            sft_labels = np.concatenate(all_labels, axis=0)
+
+        sft_train_meta = {"num_records": total_records, "seq_len": args.seq_len}
 
         for name, arr in [
             ("sft_train_inputs", sft_inputs),
@@ -279,7 +328,7 @@ def main() -> None:
         with open(out_dir / "sft_meta.json", "w", encoding="utf-8") as f:
             json.dump(sft_train_meta, f, indent=2)
         print(
-            f"SFT train packed: {sft_train_meta['num_records']} records -> "
+            f"SFT train packed: {total_records} records (merged from {len(sft_sources)} sources) -> "
             f"sft_train_inputs.bin + sft_train_labels.bin"
         )
 

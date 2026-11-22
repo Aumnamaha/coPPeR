@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +30,20 @@ from data_schemas import EDITOR_TOOLS_SPEC, validate_teacher_output
 from tokenizer_wrapper import CopperTokenizer
 
 # ---------------------------------------------------------------------------
-# Pydantic models
+# OpenAI-compatible request/response models
 # ---------------------------------------------------------------------------
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    messages: list[ChatMessage]
+    max_new_tokens: int = 128
+    temperature: float = 0.7
+    stream: bool = False
 
 
 class EditSpanRequest(BaseModel):
@@ -58,7 +71,13 @@ class EditSpanResponse(BaseModel):
 
 _model = None
 _tokenizer = None
-_backend_mode = "none"  # pytorch | llama_cpp_proxy
+_backend_mode = "none"
+_available_backends: list[str] = []
+
+# Backend configuration from environment
+_COPPER_BACKEND = os.environ.get("COPPER_BACKEND", "pytorch")
+_LLAMA_CPP_URL = os.environ.get("LLAMA_CPP_URL", "http://127.0.0.1:8081/v1/completions")
+_LMSTUDIO_URL = os.environ.get("LMSTUDIO_URL", "http://192.168.56.1:1234/v1")
 
 
 def _load_pytorch_model(checkpoint_dir: str) -> None:
@@ -195,17 +214,130 @@ def _run_llama_cpp_proxy(prompt: str, max_new_tokens: int = 128) -> str:
     """Proxy to an external llama-server (GGUF) instance."""
     import requests
 
-    url = os.environ.get("LLAMA_CPP_URL", "http://127.0.0.1:8081/v1/completions")
+    url = os.environ.get("LLAMA_CPP_URL", _LLAMA_CPP_URL)
     payload = {
         "prompt": prompt,
         "max_tokens": max_new_tokens,
-        "temperature": 0.0,
+        "temperature": 0.7,
         "stop": ["<|doc_end|>", "<|sel_start|>"],
     }
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     return data.get("choices", [{}])[0].get("text", "")
+
+
+def _run_lmstudio_proxy(messages: list[dict], max_new_tokens: int = 128) -> str:
+    """Proxy to an LM Studio server (OpenAI-compatible API)."""
+    import requests
+
+    url = os.environ.get("LMSTUDIO_URL", _LMSTUDIO_URL)
+    payload = {
+        "messages": messages,
+        "max_tokens": max_new_tokens,
+        "temperature": 0.7,
+        "stream": False,
+    }
+    resp = requests.post(f"{url}/chat/completions", json=payload, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+
+def _detect_available_backends() -> list[str]:
+    """Detect which backends are available based on environment configuration."""
+    backends: list[str] = []
+    if os.environ.get("CHECKPOINT_DIR"):
+        backends.append("pytorch")
+    if (
+        _LLAMA_CPP_URL
+        and not _LLAMA_CPP_URL.endswith("v1/completions")
+        or "8081" in _LLAMA_CPP_URL
+    ):
+        backends.append("llamacpp")
+    if _LMSTUDIO_URL:
+        backends.append("lmstudio")
+    # Always report pytorch as available config since it can be loaded on demand
+    if not backends and os.environ.get("CHECKPOINT_DIR"):
+        backends = ["pytorch"]
+    elif "llamacpp" in _COPPER_BACKEND or "lmstudio" in _COPPER_BACKEND:
+        # If user explicitly requests a backend, check connectivity
+        pass
+    if not backends:
+        backends = ["pytorch"]  # default
+    return backends
+
+
+# ---------------------------------------------------------------------------
+# SSE streaming generator
+# ---------------------------------------------------------------------------
+
+
+def _sse_event(data: dict[str, Any]) -> str:
+    """Format a JSON-serializable dict as an SSE data line."""
+    return f"data: {json.dumps(data)}\n\n"
+
+
+async def _stream_pytorch_responses(
+    messages: list[dict],
+    max_new_tokens: int = 128,
+    temperature: float = 0.7,
+) -> AsyncGenerator[str, None]:
+    """Token-by-token SSE stream for PyTorch inference."""
+    import torch
+
+    tokenizer = _tokenizer
+    if tokenizer is None:
+        raise RuntimeError("Tokenizer not loaded")
+
+    chatml_str = tokenizer.format_chatml(messages)
+    input_ids = tokenizer.encode(chatml_str, add_bos=False, add_eos=False)
+
+    device = next(_model.parameters()).device
+    input_tensor = torch.tensor([input_ids], dtype=torch.long).to(device)
+
+    unk_id = tokenizer.token_to_id("<|unk|>")
+
+    with torch.no_grad():
+        outputs = _model.generate(
+            input_tensor,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            eos_token_id=tokenizer.eos_token_id,
+            ban_token_ids=[unk_id] if unk_id is not None else [],
+        )
+
+    generated_ids = outputs[0][input_tensor.shape[1] :].tolist()
+
+    # Emit tokens one at a time as SSE chunks
+    for i, token_id in enumerate(generated_ids):
+        if token_id == tokenizer.eos_token_id:
+            break
+        token_text = tokenizer.decode([token_id])
+        # Strip <|unk|> from each emitted chunk
+        token_text = token_text.replace("<|unk|>", "")
+        if not token_text or token_text.isspace():
+            continue
+        yield _sse_event(
+            {
+                "id": f"chatcmpl-{i}",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "copper-1b",
+                "choices": [{"index": 0, "delta": {"content": token_text}}],
+            }
+        )
+
+    yield _sse_event(
+        {
+            "id": f"chatcmpl-{len(generated_ids)}",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "copper-1b",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+    )
+    yield "data: [DONE]\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -223,10 +355,13 @@ app = FastAPI(
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Health check endpoint."""
+    """Health check endpoint with backend metadata."""
+    available = _detect_available_backends()
     return {
         "status": "ok",
         "backend_mode": _backend_mode,
+        "available_backends": available,
+        "configured_backend": _COPPER_BACKEND,
         "EDITOR_TOOLS_SPEC": EDITOR_TOOLS_SPEC,
     }
 
@@ -284,7 +419,7 @@ async def edit_span(req: EditSpanRequest) -> EditSpanResponse:
             status_code=503,
             detail=(
                 "No model loaded. Set CHECKPOINT_DIR env var for PyTorch mode, "
-                "or LLAMA_CPP_URL for llama-cpp proxy mode."
+                "or LLAMA_CPP_URL/LMSTUDIO_URL for proxy backends."
             ),
         )
 
@@ -303,6 +438,132 @@ async def edit_span(req: EditSpanRequest) -> EditSpanResponse:
     )
 
 
+@app.post("/v1/chat/completions")
+async def chat_completions(req: ChatCompletionRequest):
+    """OpenAI-compatible chat completions endpoint.
+
+    Supports both non-streaming (JSON) and streaming (SSE) responses.
+    """
+    # Lazy-load tokenizer and model on first request if not already loaded
+    try:
+        _load_tokenizer(
+            str(
+                Path(__file__).resolve().parent.parent
+                / "data"
+                / "tokenizer"
+                / "copper_tokenizer.json"
+            )
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Tokenizer not found: {exc}",
+        ) from exc
+
+    # Auto-load PyTorch model if CHECKPOINT_DIR env var is set and not yet loaded
+    checkpoint_dir = os.environ.get("CHECKPOINT_DIR", "")
+    if _backend_mode == "none" and checkpoint_dir:
+        try:
+            _load_pytorch_model(checkpoint_dir)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Failed to load model from {checkpoint_dir}. "
+                    "Make sure the checkpoint directory is valid."
+                ),
+            )
+
+    messages_dicts = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    # Handle streaming vs non-streaming
+    if req.stream:
+        from fastapi.responses import StreamingResponse
+
+        return StreamingResponse(
+            _stream_pytorch_responses(
+                messages_dicts, req.max_new_tokens, req.temperature
+            ),
+            media_type="text/event-stream",
+        )
+
+    # Non-streaming: run full inference and return JSON response
+    if _backend_mode == "pytorch":
+        result = _run_pytorch_inference(
+            messages_dicts, max_new_tokens=req.max_new_tokens
+        )
+    elif _backend_mode == "llama_cpp_proxy":
+        chatml_str = _tokenizer.format_chatml(messages_dicts)  # type: ignore[name-defined]
+        result = _run_llama_cpp_proxy(chatml_str, max_new_tokens=req.max_new_tokens)
+    elif _backend_mode == "lmstudio_proxy":
+        result = _run_lmstudio_proxy(messages_dicts, max_new_tokens=req.max_new_tokens)
+    else:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No model loaded. Set CHECKPOINT_DIR for PyTorch mode, "
+                "LLAMA_CPP_URL for llama-cpp proxy, or LMSTUDIO_URL for LM Studio."
+            ),
+        )
+
+    return {
+        "id": "chatcmpl-local",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "copper-1b",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": result},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+@app.post("/edit/stream")
+async def edit_stream(req: ChatCompletionRequest):
+    """Streaming document editing endpoint (SSE token-by-token)."""
+    from fastapi.responses import StreamingResponse
+
+    # Lazy-load tokenizer and model on first request if not already loaded
+    try:
+        _load_tokenizer(
+            str(
+                Path(__file__).resolve().parent.parent
+                / "data"
+                / "tokenizer"
+                / "copper_tokenizer.json"
+            )
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Tokenizer not found: {exc}",
+        ) from exc
+
+    # Auto-load PyTorch model if CHECKPOINT_DIR env var is set and not yet loaded
+    checkpoint_dir = os.environ.get("CHECKPOINT_DIR", "")
+    if _backend_mode == "none" and checkpoint_dir:
+        try:
+            _load_pytorch_model(checkpoint_dir)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Failed to load model from {checkpoint_dir}. "
+                    "Make sure the checkpoint directory is valid."
+                ),
+            )
+
+    messages_dicts = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    return StreamingResponse(
+        _stream_pytorch_responses(messages_dicts, req.max_new_tokens, req.temperature),
+        media_type="text/event-stream",
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
@@ -317,24 +578,40 @@ def main() -> None:
         "TOKENIZER_PATH",
         str(Path(__file__).resolve().parent.parent / "data" / "tokenizer"),
     )
-    llama_cpp_url = os.environ.get("LLAMA_CPP_URL", "")
 
-    if checkpoint_dir:
-        try:
-            _load_tokenizer(str(Path(tokenizer_path) / "copper_tokenizer.json"))
-            _load_pytorch_model(checkpoint_dir)
-        except Exception:  # noqa: BLE001
-            print(
-                "Warning: PyTorch model load failed, falling back to proxy if "
-                "LLAMA_CPP_URL is set."
-            )
-            llama_cpp_url = os.environ.get("LLAMA_CPP_URL", "")
-
-    if not llama_cpp_url and _backend_mode == "none":
+    # Select backend based on COPPER_BACKEND env var
+    backend = _COPPER_BACKEND.lower()
+    if backend == "pytorch":
+        if checkpoint_dir:
+            try:
+                _load_tokenizer(str(Path(tokenizer_path) / "copper_tokenizer.json"))
+                _load_pytorch_model(checkpoint_dir)
+            except Exception:  # noqa: BLE001
+                print(
+                    "Warning: PyTorch model load failed, falling back to proxy if "
+                    "LLAMA_CPP_URL or LMSTUDIO_URL is set."
+                )
+        else:
+            print("INFO: CHECKPOINT_DIR not set; running in proxy-only mode.")
+    elif backend == "llamacpp":
+        _backend_mode = "llama_cpp_proxy"
+        print(f"INFO: Using llama-cpp proxy at {_LLAMA_CPP_URL}")
+    elif backend == "lmstudio":
+        _backend_mode = "lmstudio_proxy"
+        print(f"INFO: Using LM Studio proxy at {_LMSTUDIO_URL}")
+    else:
+        # Unknown backend — default to pytorch and warn
         print(
-            "INFO: No backend loaded. Set CHECKPOINT_DIR for PyTorch mode "
-            "or LLAMA_CPP_URL for llama-cpp proxy."
+            f"WARNING: Unknown COPPER_BACKEND='{_COPPER_BACKEND}', defaulting to pytorch"
         )
+        if checkpoint_dir:
+            try:
+                _load_tokenizer(str(Path(tokenizer_path) / "copper_tokenizer.json"))
+                _load_pytorch_model(checkpoint_dir)
+            except Exception:  # noqa: BLE001
+                print("Warning: PyTorch model load failed.")
+        else:
+            print("INFO: CHECKPOINT_DIR not set; running in proxy-only mode.")
 
     uvicorn.run(
         app,

@@ -245,6 +245,182 @@ except ValueError as e:
         assert "FAIL" not in result.stdout
 
 
+class TestExtraSFTPacking:
+    """Verify pack_dataset.py --extra-sft-jsonl merging."""
+
+    @staticmethod
+    def _write_test_jsonl(path: str, records: list[dict]) -> None:
+        """Write test ChatML JSONL records to a file."""
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(json.dumps(rec) + "\n" for rec in records)
+
+    def test_extra_sft_jsonl_merges_records(self, tmp_path):
+        """pack_dataset.py merges extra SFT JSONL files into training set."""
+        import subprocess
+        import sys
+
+        # Create minimal tokenizer for testing (reuse existing)
+        packed_dir = str(tmp_path / "packed")
+        Path(packed_dir).mkdir(parents=True, exist_ok=True)
+
+        # Copy existing packed data as baseline
+        src_packed = Path("data/packed")
+        if src_packed.exists():
+            for fname in ["pretrain_train.bin", "tokenizer"]:
+                pass  # We'll use the existing tokenizer path
+
+        # Create a tiny test SFT JSONL file
+        sft_main = str(tmp_path / "main.jsonl")
+        self._write_test_jsonl(
+            sft_main,
+            [
+                {
+                    "messages": [
+                        {"role": "system", "content": "You are helpful."},
+                        {"role": "user", "content": "Hello"},
+                        {"role": "assistant", "content": "Hi there!"},
+                    ],
+                },
+            ],
+        )
+
+        # Create extra SFT JSONL file
+        sft_extra = str(tmp_path / "extra.jsonl")
+        self._write_test_jsonl(
+            sft_extra,
+            [
+                {
+                    "messages": [
+                        {"role": "system", "content": "You are helpful."},
+                        {"role": "user", "content": "How are you?"},
+                        {"role": "assistant", "content": "I am fine!"},
+                    ],
+                },
+            ],
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(
+                    Path(__file__).resolve().parent.parent
+                    / "scripts"
+                    / "pack_dataset.py"
+                ),
+                "--sft-train-jsonl",
+                sft_main,
+                "--extra-sft-jsonl",
+                sft_extra,
+                "--out-dir",
+                packed_dir,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, f"Packing failed: {result.stderr}"
+        # Should report merging from 2 sources
+        assert (
+            "merged from 2 sources" in result.stdout
+            or "extra SFT source" in result.stdout
+        )
+
+    def test_no_extra_sft_flag_disables_auto_merge(self, tmp_path):
+        """--no-extra-sft prevents auto-merging of aug_skills.jsonl."""
+        import subprocess
+        import sys
+
+        packed_dir = str(tmp_path / "packed")
+        Path(packed_dir).mkdir(parents=True, exist_ok=True)
+
+        sft_main = str(tmp_path / "main.jsonl")
+        self._write_test_jsonl(
+            sft_main,
+            [
+                {
+                    "messages": [
+                        {"role": "system", "content": "You are helpful."},
+                        {"role": "user", "content": "Hello"},
+                        {"role": "assistant", "content": "Hi there!"},
+                    ],
+                },
+            ],
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(
+                    Path(__file__).resolve().parent.parent
+                    / "scripts"
+                    / "pack_dataset.py"
+                ),
+                "--sft-train-jsonl",
+                sft_main,
+                "--no-extra-sft",
+                "--out-dir",
+                packed_dir,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, f"Packing failed: {result.stderr}"
+
+
+class TestResumeFromTraining:
+    """Verify train_copper.py --resume-from SFT warm-start."""
+
+    def test_resume_from_flag_is_accepted(self):
+        """train_copper.py accepts --resume-from argument without error."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(
+                    Path(__file__).resolve().parent.parent
+                    / "scripts"
+                    / "train_copper.py"
+                ),
+                "--help",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        assert "--resume-from" in result.stdout
+
+    def test_resume_from_produces_help_text(self):
+        """--resume-from flag shows proper help description."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(
+                    Path(__file__).resolve().parent.parent
+                    / "scripts"
+                    / "train_copper.py"
+                ),
+                "--help",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        help_text = result.stdout + result.stderr
+        assert "warm-start" in help_text.lower() or "checkpoint" in help_text.lower()
+
+
 class TestCUDA:
     def test_cuda_available(self):
         import torch

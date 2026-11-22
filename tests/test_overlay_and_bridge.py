@@ -347,3 +347,111 @@ class TestOverlayServerIntegration:
         body = resp.json()
         assert body["status"] == "ok"
         assert "EDITOR_TOOLS_SPEC" in body
+
+
+class TestHealthEndpointBackendMetadata:
+    """Verify GET /health returns backend metadata."""
+
+    def test_health_returns_available_backends(self):
+        """GET /health includes available_backends and configured_backend keys."""
+        from fastapi.testclient import TestClient
+
+        from app.inference_server import app as server_app
+
+        client = TestClient(server_app)
+        resp = client.get("/health", timeout=5)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "available_backends" in body
+        assert isinstance(body["available_backends"], list)
+        assert len(body["available_backends"]) > 0
+        assert "configured_backend" in body
+        assert isinstance(body["configured_backend"], str)
+
+    def test_health_status_is_ok(self):
+        """Health endpoint always returns status=ok when FastAPI is running."""
+        from fastapi.testclient import TestClient
+
+        from app.inference_server import app as server_app
+
+        client = TestClient(server_app)
+        resp = client.get("/health", timeout=5)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+
+
+class TestChatCompletionsEndpoint:
+    """Verify POST /v1/chat/completions endpoint structure."""
+
+    def test_chat_completions_503_without_model(self, monkeypatch):
+        """Without model loaded, returns 503 with actionable detail."""
+        from fastapi.testclient import TestClient
+
+        monkeypatch.delenv("CHECKPOINT_DIR", raising=False)
+
+        from app.inference_server import app as server_app
+
+        client = TestClient(server_app)
+        payload = {
+            "messages": [
+                {"role": "user", "content": "Hello"},
+            ],
+            "max_new_tokens": 16,
+            "stream": False,
+        }
+        resp = client.post("/v1/chat/completions", json=payload, timeout=5)
+        assert resp.status_code == 503
+        detail = resp.json().get("detail", "")
+        assert len(detail) > 10
+
+    def test_chat_completions_stream_returns_streaming_response(self, monkeypatch):
+        """With stream=True, endpoint returns a StreamingResponse (media_type text/event-stream)."""
+        import torch
+        from fastapi.testclient import TestClient
+
+        # Mock tokenizer and model to avoid actual inference
+        mock_tokenizer = type(
+            "MockTokenizer",
+            (),
+            {
+                "token_to_id": lambda self, t: 0,
+                "eos_token_id": 2,
+                "format_chatml": lambda self, msgs: "<|user|>Hello<|endoftext|>",
+                "encode": lambda self, s, **kw: [1, 2, 3],
+                "decode": lambda self, ids: "test",
+            },
+        )()
+
+        # Minimal mock tensor on CPU for parameters() iterator
+        _mock_param = torch.nn.Parameter(torch.zeros(1)).to("cpu")
+
+        mock_model = type(
+            "MockModel",
+            (),
+            {
+                "generate": staticmethod(lambda *a, **kw: torch.tensor([[1, 2, 3, 4]])),
+                "parameters": lambda self: iter([_mock_param]),
+            },
+        )()
+
+        import app.inference_server as srv_module
+
+        monkeypatch.setattr(srv_module, "_tokenizer", mock_tokenizer)
+        monkeypatch.setattr(srv_module, "_model", mock_model)
+        monkeypatch.setattr(srv_module, "_backend_mode", "pytorch")
+
+        from app.inference_server import app as server_app
+
+        client = TestClient(server_app)
+        payload = {
+            "messages": [
+                {"role": "user", "content": "Hello"},
+            ],
+            "max_new_tokens": 4,
+            "stream": True,
+        }
+        resp = client.post("/v1/chat/completions", json=payload, timeout=5)
+        # StreamingResponse should be returned with correct content-type
+        assert resp.status_code == 200
+        assert resp.headers.get("content-type") == "text/event-stream; charset=utf-8"

@@ -373,10 +373,21 @@ def run_stage_sft(
 
     start_step = 0
     if resume_from:
-        saved_model, state = load_checkpoint(Path(resume_from), device=str(device))
-        model.load_state_dict(saved_model.state_dict())
-        start_step = state.get("step", 0)
-        print(f"Resumed from step {start_step}")
+        ckpt_path = Path(resume_from)
+        try:
+            saved_model, state = load_checkpoint(ckpt_path, device=str(device))
+            model.load_state_dict(saved_model.state_dict())
+            start_step = state.get("step", 0)
+            print(f"Resumed from step {start_step}")
+        except FileNotFoundError:
+            # Checkpoint has no trainer_state.pt — just load weights
+            saved_model = CopperForCausalLM.from_pretrained(
+                ckpt_path, device=str(device), dtype=model.parameters().__next__().dtype
+            )
+            model.load_state_dict(saved_model.state_dict())
+            print(
+                f"Loaded weights from {ckpt_path} (no trainer state; starting at step 0)"
+            )
 
     model.train()
     global_step = start_step
@@ -473,6 +484,12 @@ def main() -> None:
     parser.add_argument("--save-every", type=int, default=200)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
+        "--resume-from",
+        type=str,
+        default=None,
+        help="Path to a checkpoint directory (e.g. checkpoints/copper_1b_final) to warm-start SFT training from.",
+    )
+    parser.add_argument(
         "--smoke", action="store_true", help="Run tiny 2-layer smoke test (<15s)"
     )
 
@@ -543,6 +560,10 @@ def main() -> None:
         resume_path = None
         if args.resume and (args.checkpoint_dir / "stage2_sft_latest").exists():
             resume_path = str(args.checkpoint_dir / "stage2_sft_latest")
+        # --resume-from takes priority: load from arbitrary checkpoint for warm-start
+        if args.resume_from:
+            resume_path = args.resume_from
+            print(f"Warm-starting SFT from {args.resume_from}")
         results["sft"] = run_stage_sft(
             model,
             args.packed_dir,
