@@ -82,20 +82,23 @@ def _load_pytorch_model(checkpoint_dir: str) -> None:
 
         from safetensors.torch import load_file as safe_load
 
-        # Import config class
+        # Import config and model classes
         _sys_model = str(Path(__file__).resolve().parent.parent / "src")
         if _sys_model not in sys.path:
             sys.path.insert(0, _sys_model)
-        from model import CopperConfig
+        from model import CopperConfig, CopperForCausalLM
 
-        config = CopperConfig.from_dict(json.loads(config_path.read_text()))
+        cfg_data = json.loads(config_path.read_text())
+        config = CopperConfig(
+            **{k: v for k, v in cfg_data.items() if hasattr(CopperConfig(), k)}
+        )
         state_dict = safe_load(str(model_path))
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.bfloat16 if device == "cuda" else torch.float32
-        model = config.get_model(dtype=dtype)
+        model = CopperForCausalLM(config).to(device).to(dtype)
         model.load_state_dict(state_dict, strict=False)
-        model.to(device).eval()
+        model.eval()
 
         _model = model
         _backend_mode = "pytorch"
@@ -227,7 +230,7 @@ async def edit_span(req: EditSpanRequest) -> EditSpanResponse:
 
     Accepts highlighted text + instruction, runs inference, validates output.
     """
-    # Lazy load tokenizer if needed
+    # Lazy-load tokenizer and model on first request if not already loaded
     try:
         _load_tokenizer(
             str(
@@ -237,8 +240,25 @@ async def edit_span(req: EditSpanRequest) -> EditSpanResponse:
                 / "copper_tokenizer.json"
             )
         )
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Tokenizer not found: {exc}",
+        ) from exc
+
+    # Auto-load PyTorch model if CHECKPOINT_DIR env var is set and not yet loaded
+    checkpoint_dir = os.environ.get("CHECKPOINT_DIR", "")
+    if _backend_mode == "none" and checkpoint_dir:
+        try:
+            _load_pytorch_model(checkpoint_dir)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Failed to load model from {checkpoint_dir}. "
+                    "Make sure the checkpoint directory is valid."
+                ),
+            )
 
     messages = _build_screen_aware_prompt(
         req.highlighted_text,
@@ -296,9 +316,10 @@ def main() -> None:
         try:
             _load_tokenizer(str(Path(tokenizer_path) / "copper_tokenizer.json"))
             _load_pytorch_model(checkpoint_dir)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             print(
-                f"Warning: PyTorch model load failed ({exc}), falling back to proxy if LLAMA_CPP_URL set."
+                "Warning: PyTorch model load failed, falling back to proxy if "
+                "LLAMA_CPP_URL is set."
             )
             llama_cpp_url = os.environ.get("LLAMA_CPP_URL", "")
 

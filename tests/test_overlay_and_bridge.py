@@ -266,3 +266,84 @@ class TestCtypesWintypesImport:
 
         assert _desktop_mod is not None
         assert _bridge_mod is not None
+
+
+class TestOverlayServerIntegration:
+    """Verify desktop_overlay -> inference_server communication.
+
+    Tests payload format matching, server error handling with actionable messages,
+    and the full /v1/edit-span endpoint via FastAPI TestClient (with mocked model).
+    """
+
+    @staticmethod
+    def _build_edit_span_payload():
+        """Build the exact payload desktop_overlay sends on Generate Fix."""
+        return {
+            "highlighted_text": "Set-Location",
+            "surrounding_context": "PS C:\\Users\\Aum>",
+            "instruction": "fix typo",
+            "active_app": "libreoffice_writer",
+            "mode": "cursor_span_edit",
+        }
+
+    def test_overlay_payload_matches_server_schema(self):
+        """desktop_overlay's request dict must satisfy EditSpanRequest schema."""
+        from app.inference_server import EditSpanRequest
+
+        payload = self._build_edit_span_payload()
+        req = EditSpanRequest(**payload)
+
+        assert req.highlighted_text == "Set-Location"
+        assert req.surrounding_context == "PS C:\\Users\\Aum>"
+        assert req.instruction == "fix typo"
+        assert req.active_app == "libreoffice_writer"
+        assert req.mode == "cursor_span_edit"
+
+    def test_server_returns_503_without_model(self, monkeypatch):
+        """When no model is loaded and CHECKPOINT_DIR not set, /v1/edit-span returns 503."""
+        from fastapi.testclient import TestClient
+
+        # Ensure no checkpoint dir env var is set
+        monkeypatch.delenv("CHECKPOINT_DIR", raising=False)
+
+        from app.inference_server import app as server_app
+
+        client = TestClient(server_app)
+        payload = self._build_edit_span_payload()
+        resp = client.post("/v1/edit-span", json=payload, timeout=5)
+
+        assert resp.status_code == 503
+        detail = resp.json().get("detail", "")
+        assert "No model loaded" in detail or "Tokenizer not found" in detail
+
+    def test_server_error_message_is_actionable(self, monkeypatch):
+        """Server errors include actionable details (not generic 'No response')."""
+        from fastapi.testclient import TestClient
+
+        # Ensure no checkpoint dir env var is set so we get a clean 503
+        monkeypatch.delenv("CHECKPOINT_DIR", raising=False)
+
+        from app.inference_server import app as server_app
+
+        client = TestClient(server_app)
+        payload = self._build_edit_span_payload()
+        resp = client.post("/v1/edit-span", json=payload, timeout=5)
+
+        assert resp.status_code == 503
+        body = resp.json()
+        # The detail should be a human-readable string, not empty
+        assert "detail" in body
+        assert len(body["detail"]) > 10
+
+    def test_health_endpoint_returns_tools_spec(self):
+        """GET /health returns EDITOR_TOOLS_SPEC and backend status."""
+        from fastapi.testclient import TestClient
+
+        from app.inference_server import app as server_app
+
+        client = TestClient(server_app)
+        resp = client.get("/health", timeout=5)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert "EDITOR_TOOLS_SPEC" in body

@@ -304,19 +304,60 @@ class CopperOverlay:
                 json=payload,
                 timeout=30,
             )
+            if resp.status_code != 200:
+                detail = ""
+                try:
+                    err_data = resp.json()
+                    detail = err_data.get("detail", str(resp.text))
+                except Exception:  # noqa: BLE001
+                    detail = resp.text or f"HTTP {resp.status_code}"
+                self._result_text.config(state="normal")
+                self._result_text.delete(1.0, tk.END)
+                self._result_text.insert(
+                    tk.END,
+                    f"[SERVER ERROR] HTTP {resp.status_code}: {detail}",
+                )
+                self._result_text.config(state="disabled")
+                return
+
             data = resp.json()
             self._result_text.config(state="normal")
             self._result_text.delete(1.0, tk.END)
-            result_str = data.get("result", "No response from server.")
+            result_str = data.get("result", "")
             valid = data.get("valid", False)
-            status_mark = "[OK]" if valid else "[FAIL]"
-            self._result_text.insert(tk.END, f"{status_mark} {result_str}")
+            reason = data.get("reason", "")
+
+            if not result_str:
+                # Server returned empty result — show validation detail
+                display = (
+                    f"[EMPTY RESULT] {reason}"
+                    if reason
+                    else "[EMPTY RESULT] No output from model"
+                )
+            else:
+                status_mark = "[OK]" if valid else "[WARN]"
+                display = f"{status_mark} {result_str}"
+                if not valid and reason:
+                    display += f"\n  Reason: {reason}"
+
+            self._result_text.insert(tk.END, display)
             self._result_text.config(state="disabled")
 
         except Exception as exc:  # noqa: BLE001
             self._result_text.config(state="normal")
             self._result_text.delete(1.0, tk.END)
-            self._result_text.insert(tk.END, f"Server error: {exc}")
+            # Classify the error for actionable messaging
+            err_type = type(exc).__name__
+            if "Connection" in err_type or "refused" in str(exc).lower():
+                msg = (
+                    f"[FAIL] Connection refused on {SERVER_URL} — "
+                    f"is inference_server.py running?\nError: {exc}"
+                )
+            elif "Timeout" in err_type or "timed out" in str(exc).lower():
+                msg = f"[FAIL] Server timed out after 30s — model may be loading\nError: {exc}"
+            else:
+                msg = f"[FAIL] {err_type}: {exc}"
+            self._result_text.insert(tk.END, msg)
             self._result_text.config(state="disabled")
 
     def _on_apply(self) -> None:
@@ -329,7 +370,9 @@ class CopperOverlay:
         except Exception:  # noqa: BLE001
             result = ""
 
-        if not result or result.startswith(("Server error:", "No response")):
+        if not result or result.startswith(
+            ("Server error:", "[FAIL]", "[SERVER ERROR]", "[EMPTY RESULT]")
+        ):
             return  # Nothing valid to apply
 
         success = apply_selection_replacement(result, paste_back=True)
