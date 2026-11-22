@@ -16,6 +16,60 @@ import time
 from pathlib import Path
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# 64-bit Win32 API signatures (fixes pointer truncation on x64 Windows)
+# ---------------------------------------------------------------------------
+
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+# --- user32 functions ---
+user32.OpenClipboard.argtypes = [ctypes.wintypes.HWND]
+user32.OpenClipboard.restype = ctypes.wintypes.BOOL
+
+user32.CloseClipboard.argtypes = []
+user32.CloseClipboard.restype = ctypes.wintypes.BOOL
+
+user32.EmptyClipboard.argtypes = []
+user32.EmptyClipboard.restype = ctypes.wintypes.BOOL
+
+user32.GetClipboardData.argtypes = [ctypes.wintypes.UINT]
+user32.GetClipboardData.restype = ctypes.wintypes.HANDLE
+
+user32.SetClipboardData.argtypes = [ctypes.wintypes.UINT, ctypes.wintypes.HANDLE]
+user32.SetClipboardData.restype = ctypes.wintypes.HANDLE
+
+user32.GetForegroundWindow.argtypes = []
+user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
+
+user32.GetWindowTextLengthW.argtypes = [ctypes.wintypes.HWND]
+user32.GetWindowTextLengthW.restype = ctypes.c_int
+
+user32.GetWindowTextW.argtypes = [
+    ctypes.wintypes.HWND,
+    ctypes.wintypes.LPWSTR,
+    ctypes.c_int,
+]
+user32.GetWindowTextW.restype = ctypes.c_int
+
+# SendInput: SendInput(nInputs, pInputs, cbSize) -> c_uint32
+user32.SendInput.argtypes = [ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
+user32.SendInput.restype = ctypes.c_uint32
+
+# --- kernel32 functions ---
+kernel32.GlobalAlloc.argtypes = [ctypes.wintypes.UINT, ctypes.c_size_t]
+kernel32.GlobalAlloc.restype = ctypes.wintypes.HGLOBAL
+
+kernel32.GlobalLock.argtypes = [ctypes.wintypes.HGLOBAL]
+kernel32.GlobalLock.restype = ctypes.c_void_p
+
+kernel32.GlobalUnlock.argtypes = [ctypes.wintypes.HGLOBAL]
+kernel32.GlobalUnlock.restype = ctypes.wintypes.BOOL
+
+kernel32.GlobalFree.argtypes = [ctypes.wintypes.HGLOBAL]
+kernel32.GlobalFree.restype = ctypes.wintypes.HGLOBAL
+
+
 # Import screen-aware tool specs from data_schemas
 _sys_path = str(Path(__file__).resolve().parent.parent / "src")
 if _sys_path not in sys.path:
@@ -125,13 +179,13 @@ def get_active_window_context() -> dict[str, Any]:
     """
     title = ""
     try:
-        user32 = ctypes.windll.user32
         hwnd = user32.GetForegroundWindow()
         if hwnd:
             length = user32.GetWindowTextLengthW(hwnd)
-            buf = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buf, length + 1)
-            title = buf.value or ""
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buf, length + 1)
+                title = buf.value or ""
     except (OSError, AttributeError):
         pass
 
@@ -155,28 +209,63 @@ def get_active_window_context() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Clipboard-based selection capture
+# Clipboard helpers with proper 64-bit pointer handling
 # ---------------------------------------------------------------------------
+
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
+GMEM_ZEROINIT = 0x0040
+GMEM_FLAGS = GMEM_MOVEABLE | GMEM_ZEROINIT
+
+
+def _read_clipboard_unicode() -> str | None:
+    """Read CF_UNICODETEXT from clipboard. Returns text or None."""
+    handle = user32.GetClipboardData(CF_UNICODETEXT)
+    if not handle:
+        return None
+
+    ptr = kernel32.GlobalLock(handle)
+    try:
+        if not ptr:
+            return None
+        # c_void_p on 64-bit Windows is 8 bytes; wstring_at handles null-terminated wide string
+        return ctypes.wstring_at(ptr)
+    finally:
+        kernel32.GlobalUnlock(handle)
+
+
+def _write_clipboard_unicode(text: str) -> bool:
+    """Write text to clipboard as CF_UNICODETEXT. Returns True on success."""
+    encoded = text.encode("utf-16le") + b"\x00\x00"
+    size = len(encoded)
+
+    handle = kernel32.GlobalAlloc(GMEM_FLAGS, size)
+    if not handle:
+        return False
+
+    ptr = kernel32.GlobalLock(handle)
+    try:
+        if not ptr:
+            return False
+        ctypes.memmove(ptr, encoded, size)
+    finally:
+        kernel32.GlobalUnlock(handle)
+
+    result = user32.SetClipboardData(CF_UNICODETEXT, handle)
+    # SetClipboardData takes ownership of the handle on success
+    return result is not None
 
 
 def _clipboard_backup() -> str | None:
     """Save current clipboard content to restore later."""
-    try:
-        if not ctypes.windll.user32.OpenClipboard(0):
-            return None
-
-        h = ctypes.windll.user32.GetClipboardData(1)  # CF_UNICODETEXT
-        data = None
-        if h:
-            ptr = ctypes.windll.kernel32.GlobalLock(h)
-            if ptr:
-                data = ctypes.wstring_at(ptr)
-                ctypes.windll.kernel32.GlobalUnlock(h)
-
-        ctypes.windll.user32.CloseClipboard()
-        return data
-    except (OSError, AttributeError):
+    if not user32.OpenClipboard(0):
         return None
+
+    try:
+        data = _read_clipboard_unicode()
+        return data
+    finally:
+        user32.CloseClipboard()
 
 
 def _clipboard_restore(text: str | None) -> bool:
@@ -185,21 +274,14 @@ def _clipboard_restore(text: str | None) -> bool:
         return True
 
     try:
-        if not ctypes.windll.user32.OpenClipboard(0):
+        if not user32.OpenClipboard(0):
             return False
-
-        ctypes.windll.user32.EmptyClipboard()
-        encoded = text.encode("utf-16le") + b"\x00\x00"
-        size = len(encoded)
-        h = ctypes.windll.kernel32.GlobalAlloc(0x30, size)  # GMEM_MOVEABLE | ZEROINIT
-        ptr = ctypes.windll.kernel32.GlobalLock(h)
-        if ptr:
-            ctypes.memmove(ptr, encoded, size)
-            ctypes.windll.kernel32.GlobalUnlock(h)
-
-        ctypes.windll.user32.SetClipboardData(1, h)  # CF_UNICODETEXT
-        ctypes.windll.user32.CloseClipboard()
-        return True
+        try:
+            user32.EmptyClipboard()
+            ok = _write_clipboard_unicode(text)
+            return ok
+        finally:
+            user32.CloseClipboard()
     except (OSError, AttributeError):
         return False
 
@@ -233,7 +315,6 @@ def capture_highlighted_selection(
 
     try:
         # Send Ctrl+C to copy selection using SendInput
-        user32 = ctypes.windll.user32
         INPUT_KEYBOARD = 1
         KEYEVENTF_KEYUP = 0x0002
 
@@ -264,22 +345,25 @@ def capture_highlighted_selection(
         time.sleep(0.05)
 
         # Read clipboard for selected text
-        if not ctypes.windll.user32.OpenClipboard(0):
+        if not user32.OpenClipboard(0):
             return {
                 "selected_text": "",
                 "wrapped_document": "",
                 "clipboard_restored": False,
             }
 
-        h = ctypes.windll.user32.GetClipboardData(1)  # CF_UNICODETEXT
-        selected = ""
-        if h:
-            ptr = ctypes.windll.kernel32.GlobalLock(h)
-            if ptr:
-                selected = ctypes.wstring_at(ptr).strip()
-                ctypes.windll.kernel32.GlobalUnlock(h)
-
-        ctypes.windll.user32.CloseClipboard()
+        try:
+            h = user32.GetClipboardData(CF_UNICODETEXT)
+            selected = ""
+            if h:
+                ptr = kernel32.GlobalLock(h)
+                try:
+                    if ptr:
+                        selected = ctypes.wstring_at(ptr).strip()
+                finally:
+                    kernel32.GlobalUnlock(h)
+        finally:
+            user32.CloseClipboard()
 
     finally:
         restored = _clipboard_restore(original)
@@ -324,20 +408,15 @@ def apply_selection_replacement(
     # Place text on clipboard
     _clipboard_backup()
     try:
-        if not ctypes.windll.user32.OpenClipboard(0):
+        if not user32.OpenClipboard(0):
             return False
 
-        ctypes.windll.user32.EmptyClipboard()
-        encoded = replacement_text.encode("utf-16le") + b"\x00\x00"
-        size = len(encoded)
-        h = ctypes.windll.kernel32.GlobalAlloc(0x30, size)  # GMEM_MOVEABLE | ZEROINIT
-        ptr = ctypes.windll.kernel32.GlobalLock(h)
-        if ptr:
-            ctypes.memmove(ptr, encoded, size)
-            ctypes.windll.kernel32.GlobalUnlock(h)
-
-        ctypes.windll.user32.SetClipboardData(1, h)  # CF_UNICODETEXT
-        ctypes.windll.user32.CloseClipboard()
+        try:
+            user32.EmptyClipboard()
+            ok = _write_clipboard_unicode(replacement_text)
+            return ok
+        finally:
+            user32.CloseClipboard()
     except (OSError, AttributeError):
         return False
 
@@ -345,7 +424,6 @@ def apply_selection_replacement(
         return True
 
     # Simulate Ctrl+V to replace selection in-place
-    user32 = ctypes.windll.user32
     INPUT_KEYBOARD = 1
     KEYEVENTF_KEYUP = 0x0002
 
