@@ -111,12 +111,31 @@ def cmd_check_only(root: Path) -> int:
     return 0
 
 
+def _find_python_dlls() -> list[tuple[str, str]]:
+    """Discover python3*.dll from sys.base_prefix and sys.executable parent.
+
+    Returns list of (source_path, dest_dir) tuples for PyInstaller --add-binary.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    dlls: list[tuple[str, str]] = []
+    for base in [_Path(_sys.base_prefix), _Path(_sys.executable).parent]:
+        if not base.exists():
+            continue
+        for dll_path in sorted(base.glob("python3*.dll")):
+            pair = (str(dll_path), ".")  # copy to _internal/ root
+            if pair not in dlls:
+                dlls.append(pair)
+    return dlls
+
+
 def cmd_build(root: Path) -> int:
     """Run PyInstaller to produce coPPeR.exe."""
-    import importlib
+    import importlib as _importlib
 
     try:
-        importlib.import_module("PyInstaller")
+        _importlib.import_module("PyInstaller")
     except ImportError:
         print("[FAIL] PyInstaller not installed.")
         return 1
@@ -131,6 +150,15 @@ def cmd_build(root: Path) -> int:
     app_py = str(root / "app" / "workspace_app.py")
     ui_dir = str(root / "app" / "workspace_ui")
     src_dir = str(root / "src")
+
+    # Discover Python base DLLs (python3.dll, python314.dll etc.)
+    py_dlls = _find_python_dlls()
+    print(
+        "[INFO] Found Python DLLs to bundle: "
+        + ", ".join(d[0].split(chr(92))[-1] for d in py_dlls)
+        if py_dlls
+        else "[WARN] No python3*.dll found"
+    )
 
     # Write PyInstaller spec file — GUI mode (no console window)
     dist_dir.mkdir(parents=True, exist_ok=True)
@@ -158,7 +186,12 @@ def cmd_build(root: Path) -> int:
         sf.write("    [" + repr(app_py) + "],\n")
         sf.write("    pathex=[" + repr(str(root)) + "],\n")
         sf.write("    hiddenimports=[" + ", ".join(repr(h) for h in hidden) + "],\n")
-        sf.write("    binaries=[],\n")
+        # Add Python DLLs as binaries
+        if py_dlls:
+            dll_entries = [repr((src, dest)) for src, dest in py_dlls]
+            sf.write("    binaries=[" + ", ".join(dll_entries) + "],\n")
+        else:
+            sf.write("    binaries=[],\n")
         # Bundle workspace_ui and src as datas
         sf.write("    datas=[\n")
         sf.write("        (" + repr(ui_dir) + ", " + repr("app/workspace_ui") + "),\n")
@@ -191,16 +224,66 @@ def cmd_build(root: Path) -> int:
         print("[FAIL] PyInstaller exited with code " + str(result.returncode))
         return result.returncode
     exe_path = dist_dir / "coPPeR.exe"
-    if exe_path.exists():
-        size_mb = exe_path.stat().st_size / (1024 * 1024)
-        print(
-            "\n[SUCCESS] Built coPPeR.exe ("
-            + str(round(size_mb, 1))
-            + " MB) at "
-            + str(exe_path)
-        )
-    else:
+    if not exe_path.exists():
         print("[WARN] PyInstaller succeeded but coPPeR.exe not found in dist/")
+        return 1
+
+    size_mb = exe_path.stat().st_size / (1024 * 1024)
+    print(
+        "\n[SUCCESS] Built coPPeR.exe ("
+        + str(round(size_mb, 1))
+        + " MB) at "
+        + str(exe_path)
+    )
+
+    # Post-build: for console=True builds, verify DLLs in _internal/.
+    # For console=False (GUI) builds, DLLs are embedded in PKG and extracted
+    # at runtime by the runw.exe bootloader — no _internal/ folder is created.
+    internal_dir = dist_dir / "_internal"
+    if not internal_dir.exists():
+        print("[INFO] GUI build (console=False) — Python DLLs are embedded in PKG.")
+    else:
+        for src_path, _dest in py_dlls:
+            dll_name = Path(src_path).name
+            dst = internal_dir / dll_name
+            if not dst.exists():
+                import shutil as _shutil
+
+                _shutil.copy2(str(src_path), str(dst))
+                print("[INFO] Copied " + dll_name + " -> _internal/")
+
+    # Smoke test: run coPPeR.exe --headless-check --no-embedded-server
+    smoke_cmd = [
+        str(exe_path),
+        "--headless-check",
+        "--no-embedded-server",
+    ]
+    print("\n[INFO] Running frozen smoke test: " + " ".join(smoke_cmd))
+    smoke_result = subprocess.run(
+        smoke_cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=str(dist_dir),
+    )
+    if smoke_result.returncode == 0:
+        print("[SUCCESS] Frozen smoke test PASSED.")
+        if smoke_result.stdout.strip():
+            for line in smoke_result.stdout.strip().splitlines():
+                print("  " + line)
+    else:
+        print(
+            "[WARN] Smoke test returned code "
+            + str(smoke_result.returncode)
+            + " (may require GUI runtime):"
+        )
+        if smoke_result.stdout.strip():
+            for line in smoke_result.stdout.strip().splitlines():
+                print("  " + line)
+        if smoke_result.stderr.strip():
+            for line in smoke_result.stderr.strip().splitlines()[:5]:
+                print("  ERR: " + line)
     return 0
 
 

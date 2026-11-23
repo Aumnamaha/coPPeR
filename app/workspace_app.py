@@ -433,7 +433,28 @@ def main() -> None:
     """Start the workspace — native WebView2 or HTTP fallback."""
     # Parse CLI flags
     no_embedded = "--no-embedded-server" in sys.argv
+    headless_check = "--headless-check" in sys.argv
     mode = os.environ.get("COPPER_UI_MODE", "native").lower()
+
+    # --headless-check: verify frozen imports, bridge, and config — exit 0
+    if headless_check:
+        print("[coPPeR] Headless smoke check (frozen exe bootstrap)...")
+        try:
+            # Verify core app modules import correctly in frozen context
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from artifact_store import ArtifactStore  # noqa: F401
+            from model_router import get_model_router  # noqa: F401
+
+            # Verify WorkspaceBridge instantiates without error
+            bridge = WorkspaceBridge()
+            assert hasattr(bridge, "capture_selection")
+            assert hasattr(bridge, "apply_to_active_window")
+            assert hasattr(bridge, "load_file")
+            print("[coPPeR] Headless check PASSED — all imports and bridge OK.")
+            sys.exit(0)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[coPPeR] Headless check FAILED: {exc}")
+            sys.exit(1)
 
     # Auto-start embedded backend unless explicitly disabled
     if not no_embedded:

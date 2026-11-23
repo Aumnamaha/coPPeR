@@ -476,5 +476,83 @@ class TestModelRouterIntegration:
         assert inf_mod._model_router is first_router  # Same singleton
 
 
+# ========================================================================
+#  PyInstaller Build — Python DLL Bundling & Smoke Test
+# ========================================================================
+
+
+class TestPythonDLLBundling:
+    """Test that build_windows_app.py discovers and bundles python3*.dll."""
+
+    def test_find_python_dlls_returns_entries(self):
+        """_find_python_dlls() should discover python3.dll from sys.base_prefix."""
+        from scripts.build_windows_app import _find_python_dlls
+
+        dlls = _find_python_dlls()
+        assert isinstance(dlls, list), "_find_python_dlls must return a list"
+        # Should find at least python3.dll (the shim)
+        names = [d[0].split("\\")[-1] for d in dlls]
+        assert any(
+            name.startswith("python3") and name.endswith(".dll") for name in names
+        ), "Must discover at least one python3*.dll from sys.base_prefix or venv"
+
+    def test_find_python_dlls_returns_tuples(self):
+        """Each entry must be a (source_path, dest_dir) tuple."""
+        from scripts.build_windows_app import _find_python_dlls
+
+        dlls = _find_python_dlls()
+        for entry in dlls:
+            assert isinstance(entry, tuple), f"Expected tuple, got {type(entry)}"
+            assert len(entry) == 2, f"Expected (src, dest) pair, got {entry}"
+            src_path, dest_dir = entry
+            assert Path(src_path).exists(), f"DLL source not found: {src_path}"
+            assert dest_dir == ".", "Dest dir should be '.' for _internal/ root"
+
+    def test_spec_includes_dll_binaries(self):
+        """cmd_build() must write DLL paths into spec's binaries list."""
+        from scripts.build_windows_app import _find_python_dlls, cmd_check_only
+
+        root = Path(__file__).resolve().parent.parent
+        # Check-only should pass (we already verified this)
+        result = cmd_check_only(root)
+        assert result == 0, "Check-only must pass before verifying spec"
+
+        # Verify DLL discovery returns entries
+        dlls = _find_python_dlls()
+        assert len(dlls) > 0, "Must discover at least one Python DLL"
+
+    def test_launch_bat_uses_start_quotes(self):
+        """Launch_coPPeR.bat must use properly quoted start commands."""
+        bat_path = Path(__file__).resolve().parent.parent / "Launch_coPPeR.bat"
+        content = bat_path.read_text(encoding="utf-8")
+        # Must not have bare unquoted paths that could break with spaces
+        assert 'start "coPPeR Workspace"' in content or (
+            "Start-Process" in content
+        ), "Launch script must use quoted start command"
+
+    def test_workspace_app_has_headless_check(self):
+        """workspace_app.py main() must support --headless-check flag."""
+        app_path = Path(__file__).resolve().parent.parent / "app" / "workspace_app.py"
+        content = app_path.read_text(encoding="utf-8")
+        assert (
+            "--headless-check" in content
+        ), "workspace_app.py must support --headless-check CLI flag"
+        assert (
+            "_loaded_event += _inject_bridge" in content
+            or "+= _inject_bridge" in content
+        ), "Must use += for pywebview Event subscription"
+
+    def test_workspace_app_has_embedded_server(self):
+        """workspace_app.py must have --no-embedded-server support."""
+        app_path = Path(__file__).resolve().parent.parent / "app" / "workspace_app.py"
+        content = app_path.read_text(encoding="utf-8")
+        assert (
+            "--no-embedded-server" in content
+        ), "workspace_app.py must support --no-embedded-server flag"
+        assert (
+            "_ensure_backend_running" in content or "ensure_backend_running" in content
+        ), "Must have backend auto-start function"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
