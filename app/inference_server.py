@@ -741,6 +741,89 @@ async def api_export_docx(req: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Multi-Agent Work Job Endpoints (Phase 11)
+# ---------------------------------------------------------------------------
+
+_agent_runner = None
+
+
+def _get_agent_runner() -> Any:
+    """Lazy-load the MultiAgentWorkRunner singleton."""
+    global _agent_runner
+    if _agent_runner is None:
+        from agent_runner import MultiAgentWorkRunner
+
+        _agent_runner = MultiAgentWorkRunner()
+    return _agent_runner
+
+
+class WorkJobRequest(BaseModel):
+    """Payload for launching a multi-agent work job."""
+
+    title: str
+    content: str
+    instruction: str
+    agents_subset: list[str] | None = None
+
+
+@app.post("/api/work/jobs", response_model=dict[str, Any])
+async def api_create_work_job(req: WorkJobRequest) -> dict[str, Any]:
+    """Launch a parallel multi-agent work job."""
+    runner = _get_agent_runner()
+    job = runner.submit_job(
+        title=req.title,
+        content=req.content,
+        instruction=req.instruction,
+        agents_subset=req.agents_subset,
+    )
+    # Run the job immediately
+    runner.run_job(job.job_id)
+    return {
+        "job_id": job.job_id,
+        "title": job.title,
+        "status": job.status.value,
+        "created_at": job.created_at,
+    }
+
+
+@app.get("/api/work/jobs", response_model=dict[str, Any])
+async def api_list_work_jobs() -> dict[str, Any]:
+    """List recent work jobs."""
+    runner = _get_agent_runner()
+    return {"jobs": runner.list_jobs()}
+
+
+@app.get("/api/work/jobs/{job_id}", response_model=dict[str, Any])
+async def api_get_work_job(job_id: str) -> dict[str, Any]:
+    """Poll live per-agent progress graph for a job."""
+    runner = _get_agent_runner()
+    try:
+        return runner.get_job_progress(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/work/jobs/{job_id}/approve", response_model=dict[str, Any])
+async def api_approve_work_job(job_id: str) -> dict[str, Any]:
+    """Human-in-the-loop approval: saves approved artifact to ArtifactStore."""
+    runner = _get_agent_runner()
+    try:
+        return runner.approve_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/work/jobs/{job_id}/reject", response_model=dict[str, Any])
+async def api_reject_work_job(job_id: str) -> dict[str, Any]:
+    """Reject proposed edits without writing to disk."""
+    runner = _get_agent_runner()
+    try:
+        return runner.reject_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 

@@ -736,4 +736,182 @@
     }
   };
 
+  // ========================================================================
+  // Work Agents — Multi-Agent Document Runner UI (Phase 11)
+  // ========================================================================
+
+  var _currentJobId = null;
+  var _pollInterval = null;
+
+  function openWorkAgentsPanel() {
+    document.getElementById('work-agents-panel').classList.remove('hidden');
+  }
+
+  function closeWorkAgentsPanel() {
+    document.getElementById('work-agents-panel').classList.add('hidden');
+    if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
+    _currentJobId = null;
+  }
+
+  function updateAgentCards(agentsData) {
+    var cards = document.querySelectorAll('.agent-card');
+    cards.forEach(function(card) {
+      var agentName = card.getAttribute('data-agent');
+      var info = agentsData[agentName];
+      if (!info) return;
+
+      // Update status badge
+      var badge = card.querySelector('.agent-status-badge');
+      badge.textContent = info.status.charAt(0).toUpperCase() + info.status.slice(1);
+
+      // Clear previous state classes
+      card.classList.remove('running', 'done', 'failed');
+
+      if (info.status === 'running') {
+        card.classList.add('running');
+      } else if (info.status === 'done') {
+        card.classList.add('done');
+      } else if (info.status === 'failed') {
+        card.classList.add('failed');
+      }
+    });
+  }
+
+  function showProposedPreview(markdown) {
+    var preview = document.getElementById('proposed-preview');
+    var content = document.getElementById('preview-content');
+    if (markdown && markdown.length > 0) {
+      content.textContent = markdown;
+      preview.classList.remove('hidden');
+    } else {
+      preview.classList.add('hidden');
+    }
+  }
+
+  function showApprovalGate(show) {
+    var gate = document.getElementById('approval-gate');
+    if (show) {
+      gate.classList.remove('hidden');
+    } else {
+      gate.classList.add('hidden');
+    }
+  }
+
+  function updateJobStatus(status) {
+    var badge = document.getElementById('job-status-badge');
+    badge.textContent = status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ');
+    badge.className = 'status-badge';
+    badge.classList.add(status.replace(/\s+/g, '_').toLowerCase());
+  }
+
+  function startJobPolling(jobId) {
+    if (_pollInterval) { clearInterval(_pollInterval); }
+    _currentJobId = jobId;
+
+    document.getElementById('job-id-display').textContent = 'Job: ' + jobId;
+    document.getElementById('job-info-bar').classList.remove('hidden');
+
+    // Initial fetch
+    fetch('/api/work/jobs/' + jobId)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        updateAgentCards(data.agents || {});
+        updateJobStatus(data.status);
+        showProposedPreview(data.proposed_markdown);
+        if (data.status === 'awaiting_approval') {
+          showApprovalGate(true);
+        } else {
+          showApprovalGate(false);
+        }
+      })
+      .catch(function() {});
+
+    // Poll every 1.5 seconds while awaiting approval
+    _pollInterval = setInterval(function() {
+      fetch('/api/work/jobs/' + jobId)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          updateAgentCards(data.agents || {});
+          updateJobStatus(data.status);
+          showProposedPreview(data.proposed_markdown);
+          if (data.status === 'awaiting_approval') {
+            showApprovalGate(true);
+          } else {
+            showApprovalGate(false);
+          }
+        })
+        .catch(function() {});
+    }, 1500);
+  }
+
+  function sendToWork(content, instruction) {
+    if (!content || !instruction) return;
+    fetch('/api/work/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Multi-Agent Work', content: content, instruction: instruction })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      openWorkAgentsPanel();
+      startJobPolling(data.job_id);
+    })
+    .catch(function(err) {
+      console.error('Failed to send to work:', err);
+    });
+  }
+
+  // Wire up event listeners for Work Agents UI
+  (function initWorkAgentsUI() {
+    var btnSendToWork = document.getElementById('btn-send-to-work');
+    if (btnSendToWork) {
+      btnSendToWork.addEventListener('click', function() {
+        var promptInput = document.getElementById('prompt-input');
+        var content = window._currentDocumentContent || '';
+        sendToWork(content, promptInput ? promptInput.value : 'Process this document');
+      });
+    }
+
+    var btnWorkAgents = document.getElementById('btn-work-agents');
+    if (btnWorkAgents) {
+      btnWorkAgents.addEventListener('click', function() {
+        openWorkAgentsPanel();
+      });
+    }
+
+    var btnCloseAgents = document.getElementById('btn-close-agents');
+    if (btnCloseAgents) {
+      btnCloseAgents.addEventListener('click', closeWorkAgentsPanel);
+    }
+
+    var btnApprove = document.getElementById('btn-approve-artifact');
+    if (btnApprove && _currentJobId) {
+      btnApprove.addEventListener('click', function() {
+        fetch('/api/work/jobs/' + _currentJobId + '/approve', { method: 'POST' })
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.success) {
+              updateJobStatus('approved');
+              showApprovalGate(false);
+            }
+          });
+      });
+    }
+
+    var btnReject = document.getElementById('btn-reject-job');
+    if (btnReject && _currentJobId) {
+      btnReject.addEventListener('click', function() {
+        fetch('/api/work/jobs/' + _currentJobId + '/reject', { method: 'POST' })
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.success) {
+              updateJobStatus('rejected');
+              showApprovalGate(false);
+              setTimeout(closeWorkAgentsPanel, 1500);
+            }
+          });
+      });
+    }
+  })();
+
 })();

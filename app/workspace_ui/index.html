@@ -58,6 +58,17 @@
           </div>
         </div>
 
+        <!-- Send to Work Button -->
+        <button id="btn-send-to-work" class="send-btn send-to-work-btn" title="Send Document to Multi-Agent Workers">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <circle cx="8" cy="8" r="2.5" stroke="#FFFFFF" stroke-width="1.5"/>
+            <circle cx="16" cy="8" r="2.5" stroke="#FFFFFF" stroke-width="1.5"/>
+            <circle cx="12" cy="16" r="2.5" stroke="#FFFFFF" stroke-width="1.5"/>
+            <line x1="8" y1="9" x2="12" y2="14" stroke="#FFFFFF" stroke-width="1"/>
+            <line x1="16" y1="9" x2="12" y2="14" stroke="#FFFFFF" stroke-width="1"/>
+          </svg>
+        </button>
+
         <!-- Send Button -->
         <button id="btn-send" class="send-btn" title="Send (Enter)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -74,6 +85,7 @@
     <!-- Top Document Bar -->
     <div class="doc-bar">
       <button id="btn-notes-drawer" class="pill-btn notes-toggle" title="Open Notes Drawer">&#x1F4DD; Notes</button>
+      <button id="btn-work-agents" class="pill-btn work-agents-toggle hidden" title="View Work Agents Progress">⚡ Work Agents</button>
       <span id="doc-title" class="doc-title">Untitled</span>
       <div class="mode-tabs">
         <button class="tab-btn active" data-mode="document">Document</button>
@@ -136,6 +148,64 @@
     </div>
 
   </main>
+
+  <!-- ===== WORK AGENTS PANEL (progress graph + approval gate) ===== -->
+  <div id="work-agents-panel" class="agents-panel hidden">
+    <div class="agents-panel-header">
+      <h2 class="agents-panel-title">⚡ Work Agents</h2>
+      <button id="btn-close-agents" class="pill-btn close-drawer">&times;</button>
+    </div>
+
+    <!-- Job Info -->
+    <div id="job-info-bar" class="job-info hidden">
+      <span id="job-id-display" class="job-id-badge"></span>
+      <span id="job-status-badge" class="status-badge">Awaiting Approval</span>
+    </div>
+
+    <!-- Agent Progress Cards -->
+    <div id="agents-progress" class="agents-progress">
+      <div class="agent-card" data-agent="extractor">
+        <div class="agent-icon">&#x1F50D;</div>
+        <div class="agent-info">
+          <span class="agent-name">Extractor</span>
+          <span class="agent-status-badge">Queued</span>
+        </div>
+      </div>
+      <div class="agent-card" data-agent="table_builder">
+        <div class="agent-icon">&#x1F4CA;</div>
+        <div class="agent-info">
+          <span class="agent-name">Table Builder</span>
+          <span class="agent-status-badge">Queued</span>
+        </div>
+      </div>
+      <div class="agent-card" data-agent="proofreader">
+        <div class="agent-icon">&#x270D;</div>
+        <div class="agent-info">
+          <span class="agent-name">Proofreader</span>
+          <span class="agent-status-badge">Queued</span>
+        </div>
+      </div>
+      <div class="agent-card" data-agent="artifact_packager">
+        <div class="agent-icon">&#x1F4E6;</div>
+        <div class="agent-info">
+          <span class="agent-name">Artifact Packager</span>
+          <span class="agent-status-badge">Queued</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proposed Output Preview -->
+    <div id="proposed-preview" class="proposed-preview hidden">
+      <h3>Proposed Artifact</h3>
+      <pre id="preview-content"></pre>
+    </div>
+
+    <!-- Approval Gate Buttons -->
+    <div id="approval-gate" class="approval-gate hidden">
+      <button id="btn-approve-artifact" class="action-btn approve" title="Approve & Save Artifact">&#x2705; Approve &amp; Save</button>
+      <button id="btn-reject-job" class="action-btn reject" title="Reject Proposed Edits">&#x274C; Reject</button>
+    </div>
+  </div>
 
   <!-- ===== NOTES DRAWER (collapsible overlay) ===== -->
   <aside id="notes-drawer" class="drawer drawer-right">
