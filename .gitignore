@@ -68,3 +68,8 @@ desktop.ini
 
 # Windows PowerShell history
 PSHistory.txt
+
+# PyInstaller build output & spec files
+dist/
+build/pyinstaller/
+*.spec

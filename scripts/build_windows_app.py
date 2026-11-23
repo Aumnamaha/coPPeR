@@ -124,34 +124,54 @@ def cmd_build(root: Path) -> int:
     if result != 0:
         print("[FAIL] Check-only failed. Fix issues before building.")
         return result
+
     dist_dir = root / "dist" / "coPPeR"
-    spec_path = dist_dir / "coPPeR.spec"
+    work_dir = root / "build" / "pyinstaller"
+    spec_path = work_dir / "coPPeR.spec"
     app_py = str(root / "app" / "workspace_app.py")
     ui_dir = str(root / "app" / "workspace_ui")
     src_dir = str(root / "src")
-    # Write PyInstaller spec file
+
+    # Write PyInstaller spec file — GUI mode (no console window)
     dist_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
     with open(str(spec_path), "w", encoding="utf-8", newline="\n") as sf:
+        # Hidden imports: all app modules + third-party deps
+        hidden = [
+            "app.inference_server",
+            "app.artifact_store",
+            "app.agent_runner",
+            "app.model_router",
+            "app.editor_bridge",
+            "src.model",
+            "src.data_schemas",
+            "src.tokenizer_wrapper",
+            "fastapi",
+            "uvicorn",
+            "pydantic",
+            "torch",
+            "safetensors",
+            "tokenizers",
+            "webview",
+        ]
         sf.write("a = Analysis(\n")
         sf.write("    [" + repr(app_py) + "],\n")
         sf.write("    pathex=[" + repr(str(root)) + "],\n")
-        sf.write(
-            "    hiddenimports=['fastapi', 'uvicorn', 'pydantic', 'torch', 'safetensors',\n"
-        )
-        sf.write(
-            "                   'tokenizers', 'llama_cpp', 'requests', 'webview'],\n"
-        )
+        sf.write("    hiddenimports=[" + ", ".join(repr(h) for h in hidden) + "],\n")
         sf.write("    binaries=[],\n")
+        # Bundle workspace_ui and src as datas
         sf.write("    datas=[\n")
         sf.write("        (" + repr(ui_dir) + ", " + repr("app/workspace_ui") + "),\n")
         sf.write("        (" + repr(src_dir) + ", " + repr("src") + "),\n")
         sf.write("    ],\n")
         sf.write(")\n\npyz = PYZ(a.pure)\n\nexe = EXE(\n")
-        sf.write("    pyz, a.scripts, a.binaries, a.datas,\n")
-        sf.write("    name='coPPeR', console=True, strip=False, upx=True,\n")
+        sf.write("    pyz, a.scripts, [],\n")
+        # GUI app: console=False (no separate console window)
+        sf.write("    name='coPPeR', console=False, strip=True, upx=True,\n")
         sf.write("    disable_windowed_traceback=False, target_arch=None,\n")
         sf.write("    codesign_identity=None, entitlements_file=None,\n")
         sf.write(")\n")
+
     print("[INFO] Generated PyInstaller spec: " + str(spec_path))
     cmd = [
         sys.executable,
@@ -160,6 +180,10 @@ def cmd_build(root: Path) -> int:
         str(spec_path),
         "--clean",
         "--noconfirm",
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(work_dir),
     ]
     print("[INFO] Running: " + " ".join(cmd))
     result = subprocess.run(cmd, check=False, cwd=str(root))

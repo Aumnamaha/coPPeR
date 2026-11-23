@@ -8,14 +8,8 @@ if not exist "%VENV_PY%" (
     exit /b 1
 )
 
-echo [coPPeR] Starting local inference server...
-start "coPPeR Server" /min "%VENV_PY%" -m uvicorn app.inference_server:app --host 127.0.0.1 --port 8088 --log-level info
+echo [coPPeR] Launching WebView2 workspace via PowerShell...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%VENV_PY%' -ArgumentList 'app/workspace_app.py' -WorkingDirectory '%ROOT%'"
 
-echo [coPPeR] Waiting for server readiness...
-timeout /t 2 /nobreak >nul
-
-echo [coPPeR] Launching WebView2 workspace...
-start "coPPeR Workspace" "%VENV_PY%" "%ROOT%app\workspace_app.py"
-
-echo [coPPeR] Done. Server: http://127.0.0.1:8088 | Workspace: Native WebView2 window
+echo [coPPeR] Workspace launched. Backend at http://127.0.0.1:8088 | WebView2 window opened.
 

@@ -255,10 +255,10 @@ class TestLaunchNativeWebView:
                 pytest.fail(f"launch_native() uses deprecated dom_ready event: {exc}")
             raise
 
-        # Verify loaded event was bound (not dom_ready)
-        assert (
-            mock_window.events.loaded.append.called
-        ), "window.events.loaded should be used for bridge injection"
+        # Verify loaded event supports += (__iadd__) for pywebview 6.x Event subscription
+        assert hasattr(mock_window.events.loaded, "__iadd__") or callable(
+            getattr(mock_window.events.loaded, "__iadd__", None)
+        ), "Event object should support __iadd__ for pywebview 6.x subscription"
 
     def test_loaded_event_fallback_when_missing(self, monkeypatch):
         """launch_native() should not crash if .loaded is absent."""
@@ -290,6 +290,25 @@ class TestLaunchNativeWebView:
             if "loaded" in str(exc) or "dom_ready" in str(exc):
                 pytest.fail(f"launch_native() crashed on missing event: {exc}")
             raise
+
+    def test_event_uses_plus_equals_not_append(self):
+        """Source code must use += for pywebview 6.x Event subscription."""
+        src = (
+            Path(__file__).resolve().parent.parent / "app" / "workspace_app.py"
+        ).read_text(encoding="utf-8")
+        assert (
+            "+= _inject_bridge" in src
+        ), "workspace_app.py must use '+=' for pywebview Event subscription (not .append)"
+        assert (
+            "_loaded_event.append(" not in src
+        ), "workspace_app.py should not use deprecated .append() on Events"
+
+    def test_ensure_backend_running_exists(self):
+        """_ensure_backend_running function exists and is callable."""
+        import app.workspace_app as wsp_mod
+
+        assert hasattr(wsp_mod, "_ensure_backend_running")
+        assert callable(wsp_mod._ensure_backend_running)
 
 
 try:

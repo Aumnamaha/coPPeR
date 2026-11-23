@@ -292,6 +292,73 @@ def _evaluate_js(js_code: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Embedded backend auto-start (for standalone coPPeR.exe)
+# ---------------------------------------------------------------------------
+
+
+def _ensure_backend_running(
+    host: str = "127.0.0.1", port: int = 8088, timeout: float = 5.0
+) -> bool:
+    """Check if the inference server is already running.
+
+    If not, start it in a background daemon thread and wait until /health responds.
+    Returns True whether the backend was ready (already or newly started).
+    """
+    import time as _time
+    from urllib.request import urlopen
+
+    url = f"http://{host}:{port}/health"
+    # Check if already running
+    try:
+        with urlopen(url, timeout=2) as resp:
+            if resp.status == 200:
+                print(f"[coPPeR] Backend already running at {url}")
+                return True
+    except Exception:  # noqa: S110, BLE001
+        pass
+
+    # Start uvicorn in a background daemon thread
+    import subprocess as _sub
+
+    root_dir = str(Path(__file__).resolve().parent.parent)
+    print(f"[coPPeR] Starting embedded backend on {host}:{port}...")
+    proc = _sub.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "app.inference_server:app",
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+        ],
+        cwd=root_dir,
+    )
+
+    # Wait for /health to respond
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=1) as resp:
+                if resp.status == 200:
+                    print(f"[coPPeR] Backend ready at {url}")
+                    return True
+        except Exception:  # noqa: S110, BLE001
+            pass
+        _time.sleep(0.25)
+
+    proc.terminate()
+    print(
+        f"[coPPeR] WARN: Backend did not become ready within {timeout}s — "
+        "workspace will fall back to HTTP mode if server is started separately."
+    )
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Launch functions
 # ---------------------------------------------------------------------------
 
@@ -331,9 +398,10 @@ def launch_native() -> None:
         except Exception:  # noqa: S110, BLE001
             pass
 
+    # pywebview 6.x Event objects use += for subscription (not .append).
     _loaded_event = getattr(window.events, "loaded", None)
     if _loaded_event is not None:
-        _loaded_event.append(_inject_bridge)
+        _loaded_event += _inject_bridge
 
     webview.start()
 
@@ -363,7 +431,13 @@ def launch_http_fallback(host: str = "127.0.0.1", port: int = 8088) -> None:
 
 def main() -> None:
     """Start the workspace — native WebView2 or HTTP fallback."""
+    # Parse CLI flags
+    no_embedded = "--no-embedded-server" in sys.argv
     mode = os.environ.get("COPPER_UI_MODE", "native").lower()
+
+    # Auto-start embedded backend unless explicitly disabled
+    if not no_embedded:
+        _ensure_backend_running()
 
     if _HAS_WEBVIEW and mode == "native":
         print("[coPPeR] Launching native WebView2 window…")

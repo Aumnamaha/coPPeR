@@ -234,16 +234,12 @@ class TestLaunchCoPPeR:
         bat_path = _root / "Launch_coPPeR.bat"
         assert bat_path.exists(), "Launch_coPPeR.bat must exist at project root"
 
-    def test_launch_bat_starts_server(self):
-        content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
-        assert "uvicorn" in content, "Launch script should start uvicorn server"
-        assert "inference_server:app" in content
-
     def test_launch_bat_starts_workspace(self):
+        """Bat file launches workspace_app.py which auto-starts embedded backend."""
         content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
         assert (
             "workspace_app.py" in content
-        ), "Launch script should start WebView2 workspace"
+        ), "Launch script should launch workspace_app.py (which embeds the server)"
 
     def test_launch_bat_uses_project_venv(self):
         content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
@@ -261,26 +257,26 @@ class TestLaunchCoPPeR:
         assert "exit /b 1" in content
 
     def test_launch_bat_start_server_quoted(self):
-        """start command for server uses quoted path, not bare cmd."""
+        """Bat file uses Start-Process (not bare start) for path safety."""
         content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
-        assert 'start "coPPeR Server"' in content
-        # Should use %VENV_PY% directly, not wrapped in cmd /c with unquoted path
-        assert '"%VENV_PY%" -m uvicorn' in content
+        assert (
+            "Start-Process" in content
+        ), "Should use PowerShell Start-Process, not cmd.exe start"
 
     def test_launch_bat_start_workspace_quoted(self):
-        """start command for workspace uses quoted paths."""
+        """Bat file uses Start-Process with proper quoting for paths."""
         content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
-        assert 'start "coPPeR Workspace"' in content
-        # Should NOT have bare unquoted text that cmd would misinterpret as commands
-        lines = [
-            line.strip()
-            for line in content.splitlines()
-            if line.strip() and not line.strip().startswith("echo")
-        ]
-        for line in lines:
-            assert (
-                "Workspace:" not in line
-            ), f"Unquoted 'Workspace:' will be interpreted as a command: {line}"
+        assert (
+            "Start-Process -FilePath" in content
+        ), "Should use PowerShell Start-Process for paths with spaces"
+        assert "app/workspace_app.py" in content, "Should launch workspace_app.py"
+
+    def test_launch_bat_uses_start_process(self):
+        """Batch file uses PowerShell Start-Process for path safety."""
+        content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
+        assert (
+            "Start-Process" in content
+        ), "Launch_coPPeR.bat should use Start-Process for paths with spaces"
 
 
 # ========================================================================
@@ -345,6 +341,19 @@ class TestBuildWindowsApp:
             timeout=10,
         )
         assert result.returncode != 0
+
+    def test_build_script_uses_gui_mode(self):
+        """Build spec uses console=False for standalone GUI exe."""
+        src = (_root / "scripts" / "build_windows_app.py").read_text(encoding="utf-8")
+        assert (
+            "console=False" in src
+        ), "PyInstaller spec should use console=False (GUI mode, no console window)"
+
+    def test_gitignore_excludes_dist(self):
+        """dist/ and *.spec are listed in .gitignore."""
+        gitignore = (_root / ".gitignore").read_text(encoding="utf-8")
+        assert "dist/" in gitignore, ".gitignore should exclude dist/"
+        assert "*.spec" in gitignore, ".gitignore should exclude *.spec files"
 
 
 # ========================================================================
