@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -217,6 +218,79 @@ class TestSSEStreamingContract:
 # ---------------------------------------------------------------------------
 # Module-level reference to inference_server app for tests that import it
 # ---------------------------------------------------------------------------
+
+# ========================================================================
+#  Regression: pywebview loaded event & Launch_coPPeR.bat quoting
+# ========================================================================
+
+
+class TestLaunchNativeWebView:
+    """Verify launch_native() uses window.events.loaded (not dom_ready)."""
+
+    def test_loaded_event_used_not_dom_ready(self, monkeypatch):
+        """launch_native should bind to .loaded event, not .dom_ready."""
+        import app.workspace_app as wsp_mod
+
+        mock_window = MagicMock()
+        # Simulate pywebview 6.x: events.loaded exists, dom_ready does NOT
+        del mock_window.events.dom_ready
+        mock_window.events.loaded = MagicMock()
+
+        mock_bridge_cls = MagicMock(return_value=MagicMock())
+        monkeypatch.setattr(wsp_mod, "WorkspaceBridge", mock_bridge_cls)
+        monkeypatch.setattr(
+            wsp_mod,
+            "_register_hotkey",
+            lambda: None,
+        )
+        mock_create = MagicMock(return_value=mock_window)
+        monkeypatch.setattr(wsp_mod.webview, "create_window", mock_create)
+        monkeypatch.setattr(wsp_mod.webview, "start", lambda: None)
+
+        # Should NOT raise AttributeError on window.events.dom_ready
+        try:
+            wsp_mod.launch_native()
+        except AttributeError as exc:
+            if "dom_ready" in str(exc):
+                pytest.fail(f"launch_native() uses deprecated dom_ready event: {exc}")
+            raise
+
+        # Verify loaded event was bound (not dom_ready)
+        assert (
+            mock_window.events.loaded.append.called
+        ), "window.events.loaded should be used for bridge injection"
+
+    def test_loaded_event_fallback_when_missing(self, monkeypatch):
+        """launch_native() should not crash if .loaded is absent."""
+        import app.workspace_app as wsp_mod
+
+        mock_window = MagicMock()
+        # Neither loaded nor dom_ready exist (edge case)
+        type(mock_window.events).loaded = property(lambda self: None)
+        try:
+            delattr(type(mock_window.events), "dom_ready")
+        except AttributeError:
+            pass
+
+        mock_bridge_cls = MagicMock(return_value=MagicMock())
+        monkeypatch.setattr(wsp_mod, "WorkspaceBridge", mock_bridge_cls)
+        monkeypatch.setattr(
+            wsp_mod,
+            "_register_hotkey",
+            lambda: None,
+        )
+        mock_create = MagicMock(return_value=mock_window)
+        monkeypatch.setattr(wsp_mod.webview, "create_window", mock_create)
+        monkeypatch.setattr(wsp_mod.webview, "start", lambda: None)
+
+        # Should not crash — getattr fallback handles missing event
+        try:
+            wsp_mod.launch_native()
+        except AttributeError as exc:
+            if "loaded" in str(exc) or "dom_ready" in str(exc):
+                pytest.fail(f"launch_native() crashed on missing event: {exc}")
+            raise
+
 
 try:
     from app.inference_server import app as srv_module

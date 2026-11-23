@@ -323,8 +323,17 @@ def launch_native() -> None:
         background_color="#F4F7FB",
     )
 
-    # Inject bridge JS after DOM ready
-    window.events.dom_ready.append(lambda: _evaluate_js(_BRIDGE_JS))
+    # Inject bridge JS after the WebView2 document is loaded.
+    # pywebview 6.x exposes window.events.loaded (not dom_ready).
+    def _inject_bridge(window_obj):
+        try:
+            window_obj.evaluate_js(_BRIDGE_JS)
+        except Exception:  # noqa: S110, BLE001
+            pass
+
+    _loaded_event = getattr(window.events, "loaded", None)
+    if _loaded_event is not None:
+        _loaded_event.append(_inject_bridge)
 
     webview.start()
 

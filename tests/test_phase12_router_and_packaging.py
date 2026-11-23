@@ -249,6 +249,39 @@ class TestLaunchCoPPeR:
         content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
         assert "build\\.venv\\Scripts" in content or "build/.venv/Scripts" in content
 
+    def test_launch_bat_has_root_var_quoted(self):
+        """Batch file uses %~dp0 with proper quoting."""
+        content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
+        assert 'set "ROOT=%~dp0"' in content
+
+    def test_launch_bat_has_venv_check(self):
+        """Batch file validates venv exists before proceeding."""
+        content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
+        assert 'if not exist "%VENV_PY%"' in content
+        assert "exit /b 1" in content
+
+    def test_launch_bat_start_server_quoted(self):
+        """start command for server uses quoted path, not bare cmd."""
+        content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
+        assert 'start "coPPeR Server"' in content
+        # Should use %VENV_PY% directly, not wrapped in cmd /c with unquoted path
+        assert '"%VENV_PY%" -m uvicorn' in content
+
+    def test_launch_bat_start_workspace_quoted(self):
+        """start command for workspace uses quoted paths."""
+        content = (_root / "Launch_coPPeR.bat").read_text(encoding="utf-8")
+        assert 'start "coPPeR Workspace"' in content
+        # Should NOT have bare unquoted text that cmd would misinterpret as commands
+        lines = [
+            line.strip()
+            for line in content.splitlines()
+            if line.strip() and not line.strip().startswith("echo")
+        ]
+        for line in lines:
+            assert (
+                "Workspace:" not in line
+            ), f"Unquoted 'Workspace:' will be interpreted as a command: {line}"
+
 
 # ========================================================================
 #  build_windows_app.py Tests
