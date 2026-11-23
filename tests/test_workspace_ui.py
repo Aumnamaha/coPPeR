@@ -54,11 +54,11 @@ class TestWorkspaceHTML:
         assert "context-chip-area" in self._html or "chip-area" in self._html
 
     def test_workspace_has_model_selector_pill(self):
-        """HTML contains the model selector pill with dropdown items."""
-        assert "model-selector" in self._html
-        assert "copper-1b-local" in self._html
-        assert "qwen-35b-lan" in self._html
-        assert "gguf-llamacpp" in self._html
+        """HTML contains the model selector pill with dropdown container."""
+        # Profile IDs are loaded dynamically from /api/models via JS.
+        assert 'id="model-selector"' in self._html
+        assert 'id="model-label"' in self._html
+        assert 'id="model-dropdown"' in self._html
 
     def test_workspace_has_split_diff_view(self):
         """HTML has a split diff view with Original and Proposed panes."""

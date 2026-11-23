@@ -330,3 +330,81 @@ html, body {
 }
 .work-agents-toggle { background: #F5F3FF; color: #7C3AED; }
 .work-agents-toggle:hover { background: #EDE9FE; }
+
+
+
+/* ===================== MODEL SWITCHER DROPDOWN & POPOVER (Phase 12) ===================== */
+.model-pill .dropdown {
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  min-width: 200px; border-radius: 12px; background: #FFFFFF; box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: 6px; z-index: 100; border: 1px solid #E2E8F0; max-height: 300px; overflow-y: auto;
+}
+
+/* Endpoint configuration popover */
+.endpoint-popover {
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  min-width: 280px; border-radius: 14px; background: #FFFFFF; box-shadow: 0 12px 32px rgba(0,0,0,.15);
+  padding: 16px; z-index: 110; border: 1px solid #E2E8F0;
+}
+
+.endpoint-popover h4 {
+  font-size: 13px; font-weight: 700; color: #1E293B; margin: 0 0 10px 0;
+}
+
+.endpoint-popover .endpoint-field {
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px;
+}
+
+.endpoint-popover .endpoint-field label {
+  font-size: 11px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: .3px;
+}
+
+.endpoint-popover .endpoint-field input {
+  padding: 7px 10px; border-radius: 8px; border: 1.5px solid #E2E8F0; font-size: 12.5px;
+  color: #334155; background: #FAFBFC; outline: none; transition: border-color .15s ease;
+}
+
+.endpoint-popover .endpoint-field input:focus { border-color: #2563EB; }
+
+.endpoint-popover .popover-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;
+}
+
+.endpoint-popover .popover-btn {
+  padding: 5px 14px; border-radius: 999px; font-size: 12px; cursor: pointer; transition: all .15s ease; border: none;
+}
+
+.endpoint-popover .popover-btn.save { background: #2563EB; color: #FFFFFF; }
+.endpoint-popover .popover-btn.save:hover { background: #1D4ED8; }
+.endpoint-popover .popover-btn.cancel { background: #F1F5F9; color: #64748B; }
+.endpoint-popover .popover-btn.cancel:hover { background: #E2E8F0; }
+
+/* Active profile indicator */
+.model-pill.active-profile {
+  background: #DBEAFE !important; border-radius: 999px;
+}
+
+.model-switcher-note {
+  font-size: 10.5px; color: #94A3B8; padding: 6px 12px; border-top: 1px solid #EBF1F8;
+  text-align: center; cursor: pointer; user-select: none;
+}
+.model-switcher-note:hover { color: #6366F1; }
+
+/* Model profile active indicator dot */
+.profile-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: transparent; margin-left: auto; flex-shrink: 0; transition: all .15s ease;
+}
+.dropdown-item.active .profile-dot { background: #2563EB; box-shadow: 0 0 4px rgba(37,99,235,.5); }
+
+/* Settings gear icon in model pill */
+.model-settings-icon {
+  width: 14px; height: 14px; opacity: .5; transition: all .15s ease; flex-shrink: 0; cursor: pointer;
+}
+.model-pill:hover .model-settings-icon { opacity: 1; }
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .rail-left { width: 300px !important; min-width: 300px !important; max-width: 300px !important; }
+  .agents-panel { right: 10px; width: calc(100vw - 20px); }
+}
+

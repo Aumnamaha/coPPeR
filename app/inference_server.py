@@ -22,9 +22,11 @@ from pydantic import BaseModel
 # Project imports
 # ---------------------------------------------------------------------------
 
-_sys_path = str(Path(__file__).resolve().parent.parent / "src")
-if _sys_path not in sys.path:
-    sys.path.insert(0, _sys_path)
+_project_root = str(Path(__file__).resolve().parent.parent)
+_sys_path_src = str(Path(__file__).resolve().parent.parent / "src")
+for p in [_project_root, _sys_path_src]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from data_schemas import EDITOR_TOOLS_SPEC, validate_teacher_output
 from tokenizer_wrapper import CopperTokenizer
@@ -821,6 +823,61 @@ async def api_reject_work_job(job_id: str) -> dict[str, Any]:
         return runner.reject_job(job_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Model Router / Switcher Endpoints (Phase 12)
+# ---------------------------------------------------------------------------
+
+_model_router = None
+
+
+def _get_model_router() -> Any:
+    """Lazy-load the ModelRouter singleton."""
+    global _model_router
+    if _model_router is None:
+        from .model_router import get_model_router
+
+        _model_router = get_model_router()
+    return _model_router
+
+
+class ProfileSelectRequest(BaseModel):
+    """Payload for switching active model profile."""
+
+    profile_id: str
+    endpoint_url: str | None = None
+    model_name: str | None = None
+
+
+@app.get("/api/models", response_model=dict[str, Any])
+async def api_list_models() -> dict[str, Any]:
+    """Return active profile + all configured profiles."""
+    router = _get_model_router()
+    return {
+        "active_profile": router.get_active_profile(),
+        "profiles": router.list_profiles(),
+    }
+
+
+@app.post("/api/models/select", response_model=dict[str, Any])
+async def api_select_model(req: ProfileSelectRequest) -> dict[str, Any]:
+    """Switch active model profile live."""
+    router = _get_model_router()
+    result = router.select_profile(
+        profile_id=req.profile_id,
+        endpoint_url=req.endpoint_url,
+        model_name=req.model_name,
+    )
+    return {**result, "active_profile": router.get_active_profile()}
+
+
+@app.post("/api/models/arc-bundle", response_model=dict[str, Any])
+async def api_generate_arc_bundle(req: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Generate Intel Arc A750 deployment bundle (launch script + manifest)."""
+    router = _get_model_router()
+    export_dir = req.get("export_dir", "exports") if req else "exports"
+    return router.generate_arc_a750_bundle(export_dir)
 
 
 # ---------------------------------------------------------------------------

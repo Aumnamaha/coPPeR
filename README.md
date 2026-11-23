@@ -251,3 +251,146 @@ See [`LICENSE`](LICENSE) for full terms.
 ---
 
 *Built by Thirunagari Aum Namaha — Final-year CSE/AIML Student. Personal use only.*
+
+
+
+---
+
+## coPPeR v2 - Phases 8-12 Features (Zephium-Inspired Document Workspace)
+
+### Phase 8: SFT Refinement & Data Recovery
+
+- **`<|unk|>` Token Suppression** (`ban_token_ids` in `generate()`): The model's decoding pipeline now masks unknown token logits with `-inf`, preventing `<|unk|>` emission during generation.
+- **SFT Skill Augmentation**: `scripts/augment_missing_skills.py` generates clean SFT records for previously-rejected tasks (`markdown_table_refactor`, `editor_tool_call`).
+- **7-Skill SFT Packing** (`--extra-sft-jsonl`): All 2,032 SFT records (1,432 + 600) packed into binary dataset.
+- **Checkpoint Resume** (`--resume-from`): Stage 2 SFT can warm-start from existing checkpoints without resetting weights.
+
+### Phase 9: Zephium-Inspired Native WebView2 Split-Canvas Workspace
+
+- **Native Edge WebView2 Window**: `app/workspace_app.py` launches a native Windows desktop app using `pywebview` (no browser tab, no Node.js).
+- **Split-Canvas Layout**: Left AI Assistant Rail (`360px`) + Right Document & Diff Canvas.
+- **Dashed-Square Selection Tool**: Custom SVG icon button that captures highlighted text from any active window via Win32 bridge.
+- **Numbered Point-Back Citations** (circle numbers): AI responses include citation badges that highlight the corresponding document section when clicked.
+- **SSE Token Streaming**: Real-time token-by-token streaming on `/v1/chat/completions` and `/edit/stream`.
+- **Global Hotkey** (`Ctrl+Alt+Space`): Captures highlighted text from any Windows editor and opens the workspace.
+
+### Phase 10: Structured Workspace Artifacts & Local Persistence
+
+- **Local Artifact Store**: `app/artifact_store.py` manages `.md` notes, checklists, and tables in `workspace_notes/`.
+- **Interactive Checklists**: `- [ ]` / `- [x]` items rendered as clickable checkboxes with auto-save.
+- **Editable Tables**: GFM Markdown tables rendered as inline-editable grids (`+ Add Row`, `+ Add Column`).
+- **DOCX Export**: `export_to_docx()` converts artifacts to `.docx` using `python-docx`.
+
+### Phase 11: Parallel Multi-Agent Document Runner ("Send to Work")
+
+- **4 Specialized Sub-Agents** running in parallel:
+  - Extractor: Structured JSON key-facts & entity extraction
+  - Table Builder: Unstructured to clean GFM Markdown table
+  - Proofreader: Grammar, clarity, executive span refinement
+  - Artifact Packager: Synthesizes combined outputs into candidate artifact
+
+- **Human-in-the-Loop Approval Gate**: Jobs transition to `awaiting_approval` state -- proposed writes stay in memory until explicit `approve_job()` or `reject_job()`.
+- **Live Progress Graph**: Real-time per-agent status cards (`Queued`, `Running`, `Done`).
+
+### Phase 12: Live Hybrid Model Switcher & Final v2 Release
+
+- **Model Profile Router** (`app/model_router.py`): Pluggable inference profiles with local persistence.
+  - `coPPeR-1B Local` (PyTorch CUDA/CPU)
+  - `coPPeR-1B GGUF / Arc A750` (llama-server at `http://127.0.0.1:8080/v1`)
+  - `Qwen-35B LAN` (LM Studio at `http://192.168.56.1:1234/v1`)
+  - `BYOK Cloud OpenAI-Compatible` (custom endpoint, env var key)
+
+- **Live Model Switcher Pill**: Dropdown in composer UI fetches `/api/models`, switches via `/api/models/select`.
+- **Endpoint Configuration Popover**: Click gear icon to edit base URL and model name per profile.
+- **Intel Arc A750 Sync Bundle** (`/api/models/arc-bundle`): Generates `arc_a750_launch.ps1` + `manifest.json` with SHA256 verification of GGUF binary.
+
+- **Windows App Packaging**: `scripts/build_windows_app.py --check-only` / `--build` (PyInstaller).
+- **One-Click Launcher**: `Launch_coPPeR.bat` starts uvicorn server + WebView2 workspace.
+
+---
+
+## API Reference (v2 Endpoints)
+
+### Inference Server (`http://127.0.0.1:8088`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Status, backend mode, available backends |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (supports `stream: true`) |
+| `POST` | `/v1/edit-span` | Screen-aware document editing |
+| `GET` | `/workspace` | WebView2 workspace UI |
+| `POST` | `/api/workspace/capture` | Capture highlighted selection from active window |
+| `POST` | `/api/workspace/apply` | Apply text to active window via clipboard |
+
+### Artifacts & Documents (`http://127.0.0.1:8088`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/artifacts` | List saved notes/tables/checklists |
+| `GET` | `/api/artifacts/{slug}` | Load specific artifact |
+| `POST` | `/api/artifacts` | Create/update artifact on local disk |
+| `DELETE` | `/api/artifacts/{slug}` | Delete artifact |
+| `POST` | `/api/artifacts/export-docx` | Export to `.docx` |
+
+### Work Agents (`http://127.0.0.1:8088`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/work/jobs` | Launch parallel multi-agent job |
+| `GET` | `/api/work/jobs` | List recent work jobs |
+| `GET` | `/api/work/jobs/{job_id}` | Poll live per-agent progress |
+| `POST` | `/api/work/jobs/{job_id}/approve` | Human-in-the-loop approval (persists artifact) |
+| `POST` | `/api/work/jobs/{job_id}/reject` | Reject proposed edits (no disk write) |
+
+### Model Switcher (`http://127.0.0.1:8088`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/models` | Return active profile + all configured profiles |
+| `POST` | `/api/models/select` | Switch active model profile live |
+| `POST` | `/api/models/arc-bundle` | Generate Intel Arc A750 deployment bundle |
+
+---
+
+## Deployment: Intel Arc A750 (8GB VRAM)
+
+1. Copy `exports/copper-1b-q8_0.gguf` to the target machine.
+2. Install Python 3.12+ and run:
+   ```powershell
+   pip install llama-cpp-python openai
+   ```
+3. Start llama-server:
+   ```powershell
+   python -m llama_cpp.server --model copper-1b-q8_0.gguf --host 127.0.0.1 --port 8080
+   ```
+4. Set environment variables and start the workspace:
+   ```powershell
+   $env:COPPER_BACKEND = "llamacpp"
+   $env:LLAMA_CPP_URL = "http://127.0.0.1:8080/v1"
+   python app/workspace_app.py
+   ```
+
+Or use the auto-generated Arc A750 bundle:
+```powershell
+# Generate bundle via API first, then run:
+.\workspace_notesrc_a750_launch.ps1
+```
+
+---
+
+## Testing & Quality Assurance
+
+All tests are in `tests/` and run with:
+```powershell
+& "C:\Users\Aum Namaha\Documents\Proj\coPPeR\build\.venv\Scripts\python.exe" -m pytest -v
+```
+
+The test suite covers: model architecture, KV cache equivalence, tokenizer + dataset packing, training loop validation, evaluation + GGUF export, desktop overlay bridge, workspace UI (SSE streaming, citations, artifacts), multi-agent runner with human-in-the-loop approval, and Phase 12 model router / packaging.
+
+---
+
+## License
+
+**Personal Software License - Copyright (c) 2026 Thirunagari Aum Namaha. All Rights Reserved.**
+
+This software is the confidential property of Thirunagari Aum Namaha. Unauthorized copying, modification, distribution, or use of this software via any medium is strictly prohibited except for personal, private use by the copyright holder. This software is provided "AS IS", without warranty of any kind.

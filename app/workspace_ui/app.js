@@ -76,22 +76,162 @@
   }
 
   // ============================================================
-  //  Model Selector Dropdown
+  //  Model Selector — Live Fetch + Switching + Endpoint Popover (Phase 12)
   // ============================================================
+  var _modelProfiles = [];
+  var popoverOpen = false;
+
+  async function loadModelProfiles() {
+    try {
+      var resp = await fetch("/api/models");
+      if (!resp.ok) throw new Error("Failed to load models");
+      var data = await resp.json();
+      _modelProfiles = data.profiles || [];
+      var activeProfile = data.active_profile;
+
+      // Update the label
+      if (activeProfile) {
+        currentModel = activeProfile.profile_id;
+        document.getElementById("model-label").textContent = activeProfile.label || "Unknown";
+      }
+
+      // Populate dropdown
+      modelDropdown.innerHTML = "";
+      _modelProfiles.forEach(function (p) {
+        var item = document.createElement("div");
+        item.className = "dropdown-item" + (activeProfile && p.profile_id === activeProfile.profile_id ? " active" : "");
+        item.setAttribute("data-model", p.profile_id);
+        item.innerHTML = '<span>' + escapeHtml(p.label || p.profile_id) + '</span><span class="profile-dot"></span>';
+        item.addEventListener("click", function () {
+          selectModelProfile(p.profile_id, p.endpoint_url, p.model_name);
+        });
+        modelDropdown.appendChild(item);
+      });
+
+      // Add "Configure endpoint" note at bottom
+      var note = document.createElement("div");
+      note.className = "model-switcher-note";
+      note.textContent = '\u2699\uFE0F Configure Endpoint URL';
+      note.addEventListener("click", function (e) {
+        e.stopPropagation();
+        toggleEndpointPopover();
+      });
+      modelDropdown.appendChild(note);
+
+    } catch (err) {
+      console.error("loadModelProfiles error:", err);
+      // Fallback: use hardcoded defaults
+      _modelProfiles = [
+        { profile_id: "copper-1b-local", label: "\u2726 coPPeR-1B \u00B7 Local", backend: "pytorch" },
+        { profile_id: "qwen-35b-lan", label: "Qwen-35B \u00B7 LAN", backend: "lmstudio" },
+        { profile_id: "copper-1b-gguf", label: "GGUF \u00B7 Llama.cpp", backend: "llamacpp" }
+      ];
+    }
+  }
+
+  async function selectModelProfile(profileId, endpointUrl, modelName) {
+    try {
+      var resp = await fetch("/api/models/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile_id: profileId, endpoint_url: endpointUrl || null, model_name: modelName || null })
+      });
+      if (!resp.ok) throw new Error("Profile switch failed");
+      var data = await resp.json();
+
+      // Update UI
+      currentModel = profileId;
+      document.getElementById("model-label").textContent = (data.active_profile && data.active_profile.label) || profileId;
+      modelDropdown.classList.add("hidden");
+      if (popoverOpen) toggleEndpointPopover();  // Close popover too
+
+    } catch (err) {
+      alert("Failed to switch model: " + err.message);
+    }
+  }
+
+  function toggleEndpointPopover() {
+    var existing = document.getElementById("endpoint-popover");
+    if (existing) {
+      existing.remove();
+      popoverOpen = false;
+      return;
+    }
+
+    popoverOpen = true;
+    modelDropdown.classList.add("hidden");  // Close dropdown while showing popover
+
+    var popover = document.createElement("div");
+    popover.id = "endpoint-popover";
+    popover.className = "endpoint-popover";
+
+    // Get current active profile values for pre-filling
+    var active = _modelProfiles.find(function(p) { return p.profile_id === currentModel; });
+    var epUrl = (active && active.endpoint_url) || "";
+    var mName = (active && active.model_name) || "";
+
+    popover.innerHTML = '<h4>Configure Endpoint</h4>' +
+      '<div class="endpoint-field"><label>Base URL</label><input id="popover-url" type="text" value="' + escapeHtml(epUrl) + '" placeholder="http://127.0.0.1:8080/v1"></div>' +
+      '<div class="endpoint-field"><label>Model Name</label><input id="popover-model" type="text" value="' + escapeHtml(mName) + '" placeholder="copper-1b-q8_0.gguf"></div>' +
+      '<div class="popover-actions">' +
+        '<button class="popover-btn cancel" id="popover-cancel">Cancel</button>' +
+        '<button class="popover-btn save" id="popover-save">Save</button>' +
+      '</div>';
+
+    document.getElementById("model-selector").appendChild(popover);
+
+    // Close on outside click
+    setTimeout(function() {
+      document.addEventListener("click", function closePopover(e) {
+        if (!popover.contains(e.target) && e.target.id !== "model-gear") {
+          popover.remove();
+          popoverOpen = false;
+          document.removeEventListener("click", closePopover);
+        }
+      });
+    }, 100);
+
+    // Wire up buttons
+    document.getElementById("popover-cancel").addEventListener("click", function() {
+      popover.remove();
+      popoverOpen = false;
+    });
+    document.getElementById("popover-save").addEventListener("click", function() {
+      var url = document.getElementById("popover-url").value.trim();
+      var model = document.getElementById("popover-model").value.trim();
+      selectModelProfile(currentModel, url || null, model || null);
+    });
+
+    // Focus URL field
+    setTimeout(function() {
+      var urlInput = document.getElementById("popover-url");
+      if (urlInput) urlInput.focus();
+    }, 50);
+  }
+
+  // Open dropdown on click (toggles between dropdown and popover)
   modelSelector.addEventListener("click", function (e) {
     e.stopPropagation();
-    modelDropdown.classList.toggle("hidden");
+    if (popoverOpen) {
+      toggleEndpointPopover();
+    } else {
+      modelDropdown.classList.toggle("hidden");
+    }
   });
-  document.querySelectorAll(".dropdown-item").forEach(function (item) {
-    item.addEventListener("click", function () {
-      currentModel = this.dataset.model;
-      document.getElementById("model-label").textContent = this.textContent.trim();
-      document.querySelectorAll(".dropdown-item").forEach(function (i) { i.classList.remove("active"); });
-      this.classList.add("active");
-      modelDropdown.classList.add("hidden");
-    });
+
+  // Gear icon toggles endpoint popover directly
+  document.getElementById("model-gear").addEventListener("click", function(e) {
+    e.stopPropagation();
+    toggleEndpointPopover();
   });
-  document.addEventListener("click", function () { modelDropdown.classList.add("hidden"); });
+
+  document.addEventListener("click", function () {
+    modelDropdown.classList.add("hidden");
+    if (popoverOpen) toggleEndpointPopover();
+  });
+
+  // Load profiles on page load
+  loadModelProfiles();
 
   // ============================================================
   //  Citation Badge Interaction
