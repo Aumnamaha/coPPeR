@@ -259,27 +259,27 @@ class TestKVCacheGeneration:
     def test_kv_cache_equivalence(self, tiny_model, device) -> None:
         _add_src_to_path()
 
-        # Force CPU for fully deterministic comparison (CUDA SDPA can be non-deterministic)
-        # Create a deep copy to avoid contaminating the shared fixture
-        model = type(tiny_model)(tiny_model.config).to(torch.float32).to("cpu")
-        # Copy weights from original model
-        with torch.no_grad():
-            for (n1, p1), (n2, p2) in zip(
-                tiny_model.named_parameters(), model.named_parameters()
-            ):
-                assert n1 == n2
-                p2.copy_(p1.to(torch.float32).to("cpu"))
-        model.eval()
-
+        # Deterministic seed at the very start of the test (prevents state leakage)
+        torch.manual_seed(42)
         orig_deterministic = torch.backends.cudnn.deterministic
         orig_benchmark = torch.backends.cudnn.benchmark
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
         try:
+            # Force CPU for fully deterministic comparison (CUDA SDPA can be non-deterministic)
+            # Create a deep copy to avoid contaminating the shared fixture
+            model = type(tiny_model)(tiny_model.config).to(torch.float32).to("cpu")
+            # Copy weights from original model
+            with torch.no_grad():
+                for (n1, p1), (n2, p2) in zip(
+                    tiny_model.named_parameters(), model.named_parameters()
+                ):
+                    assert n1 == n2
+                    p2.copy_(p1.to(torch.float32).to("cpu"))
+            model.eval()
+
             batch, prompt_len = 1, 4
-            # Seed both random generations identically for deterministic results
-            torch.manual_seed(42)
             input_ids = torch.randint(0, 256, (batch, prompt_len))
 
             # Method 1: Use model.generate() with KV-cache internally

@@ -491,22 +491,25 @@ class TestPythonDLLBundling:
         dlls = _find_python_dlls()
         assert isinstance(dlls, list), "_find_python_dlls must return a list"
         # Should find at least python3.dll (the shim)
-        names = [d[0].split("\\")[-1] for d in dlls]
+        from pathlib import Path as _Path
+
+        names = [_Path(d).name for d in dlls]
         assert any(
             name.startswith("python3") and name.endswith(".dll") for name in names
         ), "Must discover at least one python3*.dll from sys.base_prefix or venv"
 
-    def test_find_python_dlls_returns_tuples(self):
-        """Each entry must be a (source_path, dest_dir) tuple."""
+    def test_find_python_dlls_returns_strings(self):
+        """Each entry must be an absolute string path to a python3*.dll."""
         from scripts.build_windows_app import _find_python_dlls
 
         dlls = _find_python_dlls()
         for entry in dlls:
-            assert isinstance(entry, tuple), f"Expected tuple, got {type(entry)}"
-            assert len(entry) == 2, f"Expected (src, dest) pair, got {entry}"
-            src_path, dest_dir = entry
-            assert Path(src_path).exists(), f"DLL source not found: {src_path}"
-            assert dest_dir == ".", "Dest dir should be '.' for _internal/ root"
+            assert isinstance(entry, str), f"Expected str path, got {type(entry)}"
+            p = Path(entry)
+            assert p.exists(), f"DLL source not found: {entry}"
+            assert p.name.startswith("python3") and p.name.endswith(
+                ".dll"
+            ), f"Unexpected DLL name: {p.name}"
 
     def test_spec_includes_dll_binaries(self):
         """cmd_build() must write DLL paths into spec's binaries list."""
@@ -552,6 +555,48 @@ class TestPythonDLLBundling:
         assert (
             "_ensure_backend_running" in content or "ensure_backend_running" in content
         ), "Must have backend auto-start function"
+
+    def test_build_uses_onedir_not_onefile(self):
+        """build_windows_app.py must use onedir mode (not default onefile)."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        # Must reference _internal/ directory for DLL placement
+        assert (
+            "_internal" in content
+        ), "Must reference _internal/ for onedir mode DLL placement"
+        # Must discover vcruntime DLLs alongside python3 DLLs
+        assert (
+            "vcruntime" in content.lower()
+        ), "Must discover vcruntime140*.dll for Windows runtime support"
+        # Must have hard check for python314.dll
+        assert (
+            "python314.dll NOT found" in content
+        ), "Must verify python314.dll placement before returning success"
+
+    def test_build_cleans_stale_dist(self):
+        """cmd_build() must clean dist/coPPeR before building."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert (
+            "rmtree(str(dist_dir))" in content or "shutil.rmtree" in content
+        ), "Must clean stale dist/coPPeR before building"
+
+    def test_build_copies_dlls_to_internal(self):
+        """cmd_build() must copy DLLs into _internal/ after build."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert (
+            "copy2(str(src_path), str(dst))" in content
+        ), "Must copy DLLs into _internal/ using shutil.copy2"
+        assert (
+            "mkdir(parents=True, exist_ok=True)" in content
+        ), "Must create _internal/ directory if missing"
 
 
 if __name__ == "__main__":
