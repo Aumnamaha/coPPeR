@@ -24,6 +24,9 @@ data/
 checkpoints/
 exports/
 
+# Local workspace notes / user artifacts (never committed)
+workspace_notes/
+
 # Model weight formats
 *.gguf
 *.safetensors

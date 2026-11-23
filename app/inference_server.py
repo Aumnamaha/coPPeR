@@ -660,6 +660,87 @@ async def api_apply(req: dict[str, str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Workspace Artifact Endpoints (Phase 10)
+# ---------------------------------------------------------------------------
+
+
+_artifact_store = None
+
+
+def _get_artifact_store() -> Any:
+    """Lazy-load the ArtifactStore singleton."""
+    global _artifact_store
+    if _artifact_store is None:
+        from artifact_store import DEFAULT_BASE_DIR, ArtifactStore
+
+        base_dir = os.environ.get(
+            "COPPER_WORKSPACE_DIR",
+            str(Path(__file__).resolve().parent.parent / DEFAULT_BASE_DIR),
+        )
+        _artifact_store = ArtifactStore(base_dir)
+    return _artifact_store
+
+
+@app.get("/api/artifacts")
+async def api_list_artifacts() -> dict[str, Any]:
+    """List all saved workspace artifacts."""
+    store = _get_artifact_store()
+    items = store.list_notes()
+    return {"artifacts": items}
+
+
+@app.get("/api/artifacts/{slug}")
+async def api_get_artifact(slug: str) -> dict[str, Any]:
+    """Load a specific artifact by slug."""
+    store = _get_artifact_store()
+    result = store.get_note(slug)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {slug}")
+    return result
+
+
+@app.post("/api/artifacts")
+async def api_create_artifact(req: dict[str, Any]) -> dict[str, Any]:
+    """Create or update an artifact on local disk."""
+    title = req.get("title", "Untitled")
+    content = req.get("content", "")
+    artifact_type = req.get("type", "note")
+    slug_override = req.get("slug")
+
+    store = _get_artifact_store()
+    result = store.save_note(
+        title, content=content, artifact_type=artifact_type, slug_override=slug_override
+    )
+    return {"success": True, **result}
+
+
+@app.delete("/api/artifacts/{slug}")
+async def api_delete_artifact(slug: str) -> dict[str, Any]:
+    """Delete an artifact by slug."""
+    store = _get_artifact_store()
+    deleted = store.delete_note(slug)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {slug}")
+    return {"success": True, "deleted": slug}
+
+
+@app.post("/api/artifacts/export-docx")
+async def api_export_docx(req: dict[str, Any]) -> dict[str, Any]:
+    """Export current document/table/checklist to .docx format."""
+    title = req.get("title", "Untitled")
+    content = req.get("content", "")
+    out_path = req.get("output_path", "")
+
+    if not out_path:
+        raise HTTPException(status_code=400, detail="Missing 'output_path' field")
+
+    result = _get_artifact_store().export_to_docx(title, content, out_path)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return {"success": True, **result}
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 

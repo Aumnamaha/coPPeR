@@ -104,6 +104,79 @@ class WorkspaceBridge:
         except Exception as exc:  # noqa: BLE001
             return {"error": str(exc)}
 
+    def list_artifacts(self) -> dict[str, Any]:
+        """List all saved workspace artifacts."""
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from artifact_store import ArtifactStore
+
+            base_dir = os.environ.get(
+                "COPPER_WORKSPACE_DIR",
+                str(Path(__file__).resolve().parent.parent / "workspace_notes"),
+            )
+            store = ArtifactStore(base_dir)
+            return {"success": True, "artifacts": store.list_notes()}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    def save_artifact(
+        self,
+        title: str = "",
+        content: str = "",
+        artifact_type: str = "note",
+        slug_override: str | None = None,
+    ) -> dict[str, Any]:
+        """Save a workspace artifact to local disk."""
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from artifact_store import ArtifactStore
+
+            base_dir = os.environ.get(
+                "COPPER_WORKSPACE_DIR",
+                str(Path(__file__).resolve().parent.parent / "workspace_notes"),
+            )
+            store = ArtifactStore(base_dir)
+            result = store.save_note(
+                title,
+                content=content,
+                artifact_type=artifact_type,
+                slug_override=slug_override,
+            )
+            return {"success": True, **result}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    def delete_artifact(self, slug: str) -> dict[str, Any]:
+        """Delete a workspace artifact."""
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from artifact_store import ArtifactStore
+
+            base_dir = os.environ.get(
+                "COPPER_WORKSPACE_DIR",
+                str(Path(__file__).resolve().parent.parent / "workspace_notes"),
+            )
+            store = ArtifactStore(base_dir)
+            deleted = store.delete_note(slug)
+            return {"success": bool(deleted), "deleted": slug}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    def export_docx(
+        self, title: str = "", content: str = "", output_path: str = ""
+    ) -> dict[str, Any]:
+        """Export content to a .docx file."""
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from artifact_store import ArtifactStore
+
+            result = ArtifactStore.export_to_docx(title, content, output_path)
+            if "error" in result:
+                return {"error": result["error"]}
+            return {"success": True, **result}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
 
 # ---------------------------------------------------------------------------
 # Global Hotkey (Ctrl+Alt+Space) via Win32 RegisterHotKey

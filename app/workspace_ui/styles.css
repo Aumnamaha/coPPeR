@@ -16,14 +16,14 @@ html, body {
 
 /* ---- Split Layout ---- */
 .split-layout {
-  display: flex; height: 100vh; width: 100vw; overflow: hidden;
+  display: flex; height: 100vh; width: 100vw; overflow: hidden; position: relative;
 }
 
 /* ===================== LEFT RAIL (AI Assistant) ===================== */
 .rail-left {
   width: 360px; min-width: 360px; max-width: 360px;
   display: flex; flex-direction: column;
-  background: #FFFFFF; border-right: 1px solid #E2E8F0;
+  background: #FFFFFF; border-right: 1px solid #E2E8F0; z-index: 10;
 }
 
 /* Header */
@@ -42,6 +42,11 @@ html, body {
   transition: all .15s ease; white-space: nowrap;
 }
 .pill-btn:hover { background: #EBF1F8; border-color: #CBD5E1; }
+
+.notes-toggle {
+  padding: 4px 10px; font-size: 12px; color: #6366F1; border-color: #C7D2FE;
+}
+.notes-toggle:hover { background: #EEF2FF; border-color: #A5B4FC; }
 
 /* Chat Stream */
 .chat-stream {
@@ -120,7 +125,7 @@ html, body {
 .model-pill {
   flex: 1; display: flex; align-items: center; gap: 3px; padding: 4px 10px;
   border-radius: 999px; font-size: 11.5px; color: #475569; cursor: pointer; transition: all .15s ease;
-  background: transparent; user-select: none; justify-content: center;
+  background: transparent; user-select: none; justify-content: center; position: relative;
 }
 .model-pill:hover { background: #EBF1F8; }
 
@@ -142,13 +147,12 @@ html, body {
 .send-btn svg path { fill: #FFFFFF; }
 
 /* ===================== RIGHT CANVAS (Document) ===================== */
-.canvas { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #F4F7FB; }
+.canvas { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #F4F7FB; position: relative; z-index: 5; }
 
 /* Doc bar */
 .doc-bar {
-  padding: 10px 20px; border-bottom: 1px solid #E2E8F0; background: #FFFFFF; display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px; border-bottom: 1px solid #E2E8F0; background: #FFFFFF; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
 }
-.doc-title { font-size: 14px; font-weight: 600; color: #0F172A; white-space: nowrap; }
 
 /* Mode tabs */
 .mode-tabs { display: flex; gap: 2px; background: #EBF1F8; border-radius: 8px; padding: 2px; }
@@ -159,14 +163,23 @@ html, body {
 .tab-btn.active { background: #FFFFFF; color: #0F172A; box-shadow: 0 1px 3px rgba(0,0,0,.06); font-weight: 600; }
 
 /* Doc actions */
-.doc-actions { display: flex; gap: 8px; margin-left: auto; }
+.doc-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; }
 .action-btn {
   padding: 5px 14px; border-radius: 999px; border: 1.5px solid #E2E8F0; font-size: 12px; cursor: pointer; transition: all .15s ease; background: #FFFFFF; color: #475569;
 }
+.action-btn:hover { background: #EBF1F8; border-color: #CBD5E1; }
 .action-btn.keep { border-color: #2563EB; color: #2563EB; }
 .action-btn.keep:hover { background: #2563EB; color: #FFFFFF; }
 .action-btn.undo { border-color: #E2E8F0; }
 .action-btn.undo:hover { background: #FEE2E2; border-color: #FCA5A5; color: #DC2626; }
+
+/* Small buttons (for toolbar) */
+.small-btn {
+  padding: 3px 10px; border-radius: 999px; border: 1px solid #E2E8F0; font-size: 11.5px; cursor: pointer; transition: all .15s ease; background: #FFFFFF; color: #475569;
+}
+.small-btn:hover { background: #EBF1F8; }
+.small-btn.primary { border-color: #6366F1; color: #6366F1; }
+.small-btn.primary:hover { background: #EEF2FF; }
 
 /* Document content */
 .doc-content { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 0; }
@@ -184,6 +197,75 @@ html, body {
 }
 .citation-badge.doc-badge.highlighted {
   background: #FEF3C7; color: #D97706; border-color: #FBBF24; box-shadow: 0 0 12px rgba(251,191,36,.4); transform: scale(1.2);
+}
+
+/* ===================== ARTIFACT VIEWS (Checklist / Table) ===================== */
+.artifact-view { flex: 1; overflow-y: auto; padding: 20px 24px; }
+
+/* Checklist container */
+.checklist-container { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.checklist-item {
+  display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: 10px; background: #FFFFFF; transition: all .15s ease; user-select: none; cursor: pointer;
+}
+.checklist-item:hover { box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+.checkbox {
+  width: 22px; height: 22px; border-radius: 5px; border: 2px solid #CBD5E1; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .15s ease; background: #FFFFFF; font-size: 14px; color: transparent;
+}
+.checkbox.checked { border-color: #2563EB; background: #2563EB; color: #FFFFFF; }
+.checkbox-text { font-size: 14px; color: #334155; line-height: 1.4; }
+
+/* Table grid */
+.table-toolbar { display: flex; gap: 8px; margin-bottom: 12px; padding-left: 8px; }
+.table-grid-container { overflow-x: auto; border-radius: 10px; background: #FFFFFF; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+#table-grid { width: 100%; border-collapse: collapse; min-width: 320px; }
+#table-grid th { padding: 8px 12px; background: #F8FAFC; font-size: 12.5px; font-weight: 600; color: #475569; text-align: left; border-bottom: 2px solid #E2E8F0; }
+#table-grid td { padding: 0; border-bottom: 1px solid #EBF1F8; }
+#table-grid td input {
+  width: 100%; border: none; outline: none; padding: 8px 12px; font-size: 13.5px; color: #334155; background: transparent; font-family: inherit; min-width: 80px;
+}
+#table-grid td input:focus { background: #EFF6FF; }
+
+/* ===================== NOTES DRAWER (Phase 10) ===================== */
+.drawer-right {
+  position: fixed; top: 0; right: -420px; width: 400px; height: 100vh; z-index: 50;
+  background: #FFFFFF; box-shadow: -4px 0 24px rgba(0,0,0,.1); display: flex; flex-direction: column; transition: right .25s ease; overflow: hidden;
+}
+.drawer-right.open { right: 0; }
+
+.drawer-header {
+  padding: 16px 20px; border-bottom: 1px solid #E2E8F0; display: flex; align-items: center; gap: 12px;
+}
+.drawer-title { font-size: 15px; font-weight: 700; color: #0F172A; }
+.close-drawer { padding: 4px 10px; font-size: 18px; line-height: 1; border-radius: 999px; margin-left: auto; }
+
+.drawer-new-actions {
+  display: flex; gap: 6px; padding: 12px 20px; border-bottom: 1px solid #EBF1F8; flex-wrap: wrap;
+}
+
+.notes-list { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; }
+.empty-hint { font-size: 13px; color: #94A3B8; text-align: center; margin-top: 40px; }
+
+.note-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: all .15s ease; background: #F8FAFC; border: 1px solid transparent;
+}
+.note-item:hover { background: #EBF1F8; border-color: #CBD5E1; }
+.note-info { flex: 1; min-width: 0; }
+.note-title-text { font-size: 13px; font-weight: 600; color: #1E293B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-meta { font-size: 11px; color: #94A3B8; margin-top: 2px; }
+.note-type-badge {
+  padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; flex-shrink: 0;
+}
+.note-type-badge.note { background: #DBEAFE; color: #2563EB; }
+.note-type-badge.checklist { background: #FEF3C7; color: #D97706; }
+.note-type-badge.table { background: #DCFCE7; color: #16A34A; }
+
+.note-delete-btn {
+  width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; color: #94A3B8; transition: all .15s ease; background: transparent; border: none;
+}
+.note-delete-btn:hover { background: #FEE2E2; color: #DC2626; }
+
+.drawer-backdrop {
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 40; background: rgba(0,0,0,.2);
 }
 
 /* ===================== SPLIT DIFF VIEW ===================== */

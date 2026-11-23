@@ -73,6 +73,7 @@
   <main id="right-canvas" class="canvas">
     <!-- Top Document Bar -->
     <div class="doc-bar">
+      <button id="btn-notes-drawer" class="pill-btn notes-toggle" title="Open Notes Drawer">&#x1F4DD; Notes</button>
       <span id="doc-title" class="doc-title">Untitled</span>
       <div class="mode-tabs">
         <button class="tab-btn active" data-mode="document">Document</button>
@@ -82,6 +83,10 @@
       <div class="doc-actions hidden" id="diff-actions">
         <button id="btn-keep-edit" class="action-btn keep" title="Keep Edit">&#x270E; Keep Edit</button>
         <button id="btn-undo" class="action-btn undo" title="Undo">&#x21A9; Undo</button>
+      </div>
+      <div class="doc-actions export-actions" id="export-actions">
+        <button id="btn-export-md" class="action-btn" title="Export as Markdown">&#x1F4C4; .md</button>
+        <button id="btn-export-docx" class="action-btn" title="Export as DOCX">&#x1F4C2; .docx</button>
       </div>
     </div>
 
@@ -101,6 +106,22 @@
       </div>
     </div>
 
+    <!-- Interactive Checklist View (rendered when artifact type=checklist) -->
+    <div id="checklist-view" class="artifact-view hidden">
+      <div id="checklist-items" class="checklist-container"></div>
+    </div>
+
+    <!-- Interactive Table Grid (rendered when artifact type=table) -->
+    <div id="table-view" class="artifact-view hidden">
+      <div class="table-toolbar">
+        <button id="btn-add-row" class="small-btn" title="Add Row">+ Row</button>
+        <button id="btn-add-col" class="small-btn" title="Add Column">+ Col</button>
+      </div>
+      <div id="table-grid-container" class="table-grid-container">
+        <table id="table-grid"></table>
+      </div>
+    </div>
+
     <!-- Split Diff View (hidden by default) -->
     <div id="split-diff-view" class="split-diff hidden">
       <div class="diff-pane original">
@@ -113,7 +134,28 @@
         <pre id="diff-proposed"></pre>
       </div>
     </div>
+
   </main>
+
+  <!-- ===== NOTES DRAWER (collapsible overlay) ===== -->
+  <aside id="notes-drawer" class="drawer drawer-right">
+    <div class="drawer-header">
+      <h2 class="drawer-title">&#x1F4DD; Notes &amp; Artifacts</h2>
+      <button id="btn-close-drawer" class="pill-btn close-drawer">&times;</button>
+    </div>
+    <div class="drawer-new-actions">
+      <button id="btn-new-note" class="small-btn primary" title="New Markdown Note">&#x2795; New Note</button>
+      <button id="btn-new-checklist" class="small-btn" title="New Interactive Checklist">&#x2795; Checklist</button>
+      <button id="btn-new-table" class="small-btn" title="New Structured Table">&#x2795; Table</button>
+    </div>
+    <div id="notes-list" class="notes-list">
+      <!-- Artifacts listed here by the API -->
+      <p class="empty-hint">No artifacts yet. Create one above!</p>
+    </div>
+  </aside>
+
+  <!-- Drawer overlay backdrop -->
+  <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
 
 </div><!-- /app -->
 </body>
