@@ -168,12 +168,35 @@ def _find_pyd_files() -> list[str]:
     return dlls
 
 
+def _find_dll_files() -> list[str]:
+    """Discover *.dll files from base_prefix/DLLs and base_exec_prefix/DLLs.
+
+    Returns sorted list of absolute source paths to copy into _internal/.
+    Includes libffi-8.dll, libssl-3.dll, libcrypto-3.dll, sqlite3.dll, etc.
+    """
+    import sys as _sys
+
+    dlls: list[str] = []
+    for base in [
+        Path(_sys.base_prefix) / "DLLs",
+        Path(_sys.base_exec_prefix) / "DLLs",
+    ]:
+        if not base.exists():
+            continue
+        for dll_path in sorted(base.glob("*.dll")):
+            src = str(dll_path)
+            if src not in dlls:
+                dlls.append(src)
+    return dlls
+
+
 def _bundle_stdlib(internal_dir: Path) -> None:
-    """Ensure base_library.zip and encodings are available for frozen Python.
+    """Ensure base_library.zip, encodings/, .pyd and .dll are available for frozen Python.
 
     When python314.dll loads from _internal/, Py_InitializeFromConfig looks for
     encodings inside base_library.zip (or _internal/encodings/). This function
-    guarantees those exist by copying the stdlib from sys.base_prefix/Lib.
+    guarantees those exist by copying the stdlib from sys.base_prefix/Lib,
+    plus all .pyd and .dll dependencies from DLLs/.
     """
     import sys as _sys
     import zipfile as _zipfile
@@ -193,6 +216,81 @@ def _bundle_stdlib(internal_dir: Path) -> None:
 
             _shutil.copy2(str(src), str(dst))
             print("[INFO] Copied " + Path(src).name + " -> _internal/")
+
+    # --- Copy .dll files from base_prefix/DLLs (libffi, libssl, sqlite3, etc.) ---
+    dlls = _find_dll_files()
+    for src in dlls:
+        dst = internal_dir / Path(src).name
+        if not dst.exists():
+            import shutil as _shutil
+
+            _shutil.copy2(str(src), str(dst))
+            print("[INFO] Copied " + Path(src).name + " -> _internal/")
+
+    # --- Copy project app/workspace_ui and src into _internal/ (works around
+    # strip=True/upx=True dropping PyInstaller datas in GUI mode) ---
+    root = Path(__file__).resolve().parent.parent  # project root
+    for rel_src, rel_dst in [("app/workspace_ui", "app/workspace_ui"), ("src", "src")]:
+        src_dir = root / rel_src
+        dst_dir = internal_dir / rel_dst
+        if src_dir.exists() and not dst_dir.exists():
+            import shutil as _shutil
+
+            _shutil.copytree(str(src_dir), str(dst_dir))
+            print("[INFO] Copied " + rel_src + " -> _internal/" + rel_dst)
+        elif src_dir.exists() and dst_dir.exists():
+            print("[OK] " + rel_src + " already in _internal/")
+
+    # --- Copy third-party packages that need data files (cffi, pythonnet,
+    # clr_loader, webview) — also dropped by strip=True/upx=True in GUI mode. ---
+    import sys as _sys2
+
+    # Search multiple site-packages paths: project venv, base env, and finalenv.
+    candidate_sites = [
+        Path(_sys2.executable).parent.parent / "Lib" / "site-packages",
+        Path(_sys2.base_prefix) / "Lib" / "site-packages",
+        Path(_sys2.executable).parent.parent.parent / "Lib" / "site-packages",
+        # finalenv is the shared base env where some packages (cffi) live.
+        Path("C:/Users/Aum Namaha/Documents/finalenv/Lib/site-packages"),
+    ]
+    third_party_pkgs = ["cffi", "pythonnet", "clr_loader", "webview"]
+    for pkg_name in third_party_pkgs:
+        pkg_dir = None
+        for site in candidate_sites:
+            if (site / pkg_name).exists():
+                pkg_dir = site / pkg_name
+                break
+        dst_pkg = internal_dir / "site-packages" / pkg_name
+        if pkg_dir is None:
+            print("[WARN] " + pkg_name + " not found in any site-packages, skipping.")
+            continue
+        if not dst_pkg.exists():
+            import shutil as _shutil2
+
+            _shutil2.copytree(str(pkg_dir), str(dst_pkg))
+            print(
+                "[INFO] Copied site-packages/"
+                + pkg_name
+                + " -> _internal/site-packages/"
+            )
+        else:
+            print("[OK] site-packages/" + pkg_name + " already in _internal/")
+
+    # --- Copy top-level _cffi_backend*.pyd if it exists outside the cffi package.
+    # Some installations place this .pyd at site-packages root level rather than
+    # inside cffi/backend/. This handles that edge case. ---
+    for site in candidate_sites:
+        for pyd_candidate in sorted(site.glob("_cffi_backend*.pyd")):
+            dst = internal_dir / pyd_candidate.name
+            if not dst.exists():
+                import shutil as _shutil3
+
+                _shutil3.copy2(str(pyd_candidate), str(dst))
+                print(
+                    "[INFO] Copied "
+                    + pyd_candidate.name
+                    + " (from site-packages root) -> _internal/"
+                )
 
     # --- Ensure encodings/ directory exists in _internal ---
     if not internal_encodings.exists():
@@ -283,6 +381,21 @@ def cmd_build(root: Path) -> int:
         _shutil_import.rmtree(str(dist_dir))
     spec_path.unlink(missing_ok=True)
 
+    # Build datas list: workspace_ui, src + third-party packages (cffi,
+    # pythonnet, clr_loader, webview) so PyInstaller bundles all data files.
+    import importlib.util as _importlib_util
+
+    collect_all_pkgs = ["cffi", "pythonnet", "clr_loader", "webview"]
+    extra_datas: list[tuple[str, str]] = [
+        (ui_dir, "app/workspace_ui"),
+        (src_dir, "src"),
+    ]
+    for pkg_name in collect_all_pkgs:
+        _spec = _importlib_util.find_spec(pkg_name)
+        if _spec is not None and _spec.origin is not None:
+            pkg_path = str(Path(_spec.origin).parent)
+            extra_datas.append((pkg_path, "site-packages/" + pkg_name))
+
     # Write PyInstaller spec file — onedir mode, GUI (console=False)
     dist_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -304,6 +417,15 @@ def cmd_build(root: Path) -> int:
             "safetensors",
             "tokenizers",
             "webview",
+            # pywebview / clr_loader / cffi dependencies
+            "_cffi_backend",
+            "cffi",
+            "cffi.backend_ctypes",
+            "clr",
+            "pythonnet",
+            "clr_loader",
+            "clr_loader.impl.dotnet",
+            "clr_loader.util",
         ]
         sf.write("a = Analysis(\n")
         sf.write("    [" + repr(app_py) + "],\n")
@@ -316,7 +438,10 @@ def cmd_build(root: Path) -> int:
             repr(venv_site),
         ]
         sf.write("    pathex=[" + ", ".join(pathex_list) + "],\n")
+        # Exclude heavy/unused modules to keep coPPeR.exe lean.
+        excludes = ["matplotlib", "scipy", "tkinter"]
         sf.write("    hiddenimports=[" + ", ".join(repr(h) for h in hidden) + "],\n")
+        sf.write("    excludes=[" + ", ".join(repr(e) for e in excludes) + "],\n")
         # Add Python DLLs and vcruntime as binaries for _internal/
         pyinstaller_binaries = []
         for src_path in all_dlls:
@@ -327,10 +452,10 @@ def cmd_build(root: Path) -> int:
             sf.write("    binaries=[" + ", ".join(dll_entries) + "],\n")
         else:
             sf.write("    binaries=[],\n")
-        # Bundle workspace_ui and src as datas
+        # Bundle workspace_ui, src and third-party packages as datas
         sf.write("    datas=[\n")
-        sf.write("        (" + repr(ui_dir) + ", " + repr("app/workspace_ui") + "),\n")
-        sf.write("        (" + repr(src_dir) + ", " + repr("src") + "),\n")
+        for src_path, dest in extra_datas:
+            sf.write("        (" + repr(src_path) + ", " + repr(dest) + "),\n")
         sf.write("    ],\n")
         sf.write(")\n\npyz = PYZ(a.pure)\n\nexe = EXE(\n")
         sf.write("    pyz, a.scripts, [],\n")
@@ -417,6 +542,65 @@ def cmd_build(root: Path) -> int:
         + str(zip_path.stat().st_size)
         + " bytes, encodings present="
         + str(has_enc)
+    )
+
+    # --- Verify _cffi_backend*.pyd is present (required by cffi -> webview) ---
+    # It may be at _internal/_cffi_backend*.pyd OR
+    # _internal/site-packages/cffi/backend/_cffi_backend*.pyd
+    cffi_backend_files = list(internal_dir.glob("_cffi_backend*.pyd"))
+    if not cffi_backend_files:
+        alt = internal_dir / "site-packages" / "cffi" / "backend"
+        if alt.exists():
+            cffi_backend_files = list(alt.glob("_cffi_backend*.pyd"))
+    if not cffi_backend_files:
+        print("[WARN] _cffi_backend*.pyd NOT found in dist/coPPeR/_internal/")
+        # Try to copy from site-packages
+        import shutil as _shutil_copy
+
+        venv_site = Path(_sys.executable).parent.parent / "Lib" / "site-packages"
+        cffi_backend_dir = venv_site / "cffi" / "backend"
+        if cffi_backend_dir.exists():
+            for candidate in sorted(cffi_backend_dir.glob("_cffi_backend*.pyd")):
+                # Place directly in _internal/ so it's on the Python path
+                dst = internal_dir / candidate.name
+                _shutil_copy(str(candidate), str(dst))
+                print("[INFO] Copied " + candidate.name + " -> _internal/")
+                cffi_backend_files.append(dst)
+        if not cffi_backend_files:
+            for base in [Path(_sys.base_prefix) / "DLLs", Path(_sys.executable).parent]:
+                if not base.exists():
+                    continue
+                for candidate in sorted(base.glob("_cffi_backend*.pyd")):
+                    dst = internal_dir / candidate.name
+                    _shutil_copy(str(candidate), str(dst))
+                    print("[INFO] Copied " + candidate.name + " -> _internal/")
+                    cffi_backend_files.append(dst)
+    if not cffi_backend_files:
+        print(
+            "[WARN] _cffi_backend*.pyd NOT found after fallback copy attempts."
+            + " webview may fail to initialize."
+        )
+    else:
+        print(
+            "[OK] _cffi_backend*.pyd verified: "
+            + cffi_backend_files[0].name
+            + " ("
+            + str(cffi_backend_files[0].stat().st_size)
+            + " bytes)"
+        )
+
+    # --- Verify libffi*.dll is present (required by _ctypes.pyd) ---
+    libffi_files = list(internal_dir.glob("libffi*.dll"))
+    if not libffi_files:
+        print("[FAIL] libffi*.dll NOT found in dist/coPPeR/_internal/")
+        print("_ctypes.pyd will fail with DLL load error.")
+        return 1
+    print(
+        "[OK] libffi*.dll verified: "
+        + str(libffi_files[0].name)
+        + " ("
+        + str(libffi_files[0].stat().st_size)
+        + " bytes)"
     )
 
     # Live launch verification: run coPPeR.exe for 4 seconds

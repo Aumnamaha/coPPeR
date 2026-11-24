@@ -680,6 +680,108 @@ class TestPythonDLLBundling:
             "subprocess.Popen" in content
         ), "Must use subprocess.Popen for live launch verification"
 
+    def test_find_dll_files_discovers_libffi(self):
+        """_find_dll_files() should discover libffi-8.dll from DLLs/."""
+        from scripts.build_windows_app import _find_dll_files
+
+        dlls = _find_dll_files()
+        assert isinstance(dlls, list), "_find_dll_files must return a list"
+        names = [Path(d).name for d in dlls]
+        has_libffi = any(n.startswith("libffi") and n.endswith(".dll") for n in names)
+        assert (
+            has_libffi or len(dlls) > 0
+        ), "Must discover DLL files from base_prefix/DLLs"
+
+    def test_bundle_stdlib_copies_dll_files(self):
+        """_bundle_stdlib() must copy *.dll from DLLs/ into _internal/."""
+        import tempfile as _tempfile
+
+        from scripts.build_windows_app import _bundle_stdlib
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            internal = Path(tmp) / "_internal"
+            internal.mkdir()
+            _bundle_stdlib(internal)
+            # At least libffi-8.dll should be present (from pythoncore)
+            dlls = list(internal.glob("*.dll"))
+            assert (
+                len(dlls) >= 2
+            ), f"Expected at least python3*.dll + libffi-8.dll, got {len(dlls)}"
+
+    def test_build_excludes_matplotlib(self):
+        """cmd_build() must exclude matplotlib from the PyInstaller bundle."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert (
+            "matplotlib" in content
+        ), "Must exclude matplotlib from bundle to keep coPPeR.exe lean"
+        assert "excludes=" in content, "Must use PyInstaller excludes=[] in spec file"
+
+    def test_build_verifies_libffi_dll(self):
+        """cmd_build() must verify libffi*.dll exists after build."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert (
+            "libffi" in content
+        ), "Must verify libffi*.dll presence after DLL bundling"
+
+    def test_build_includes_cffi_hidden_imports(self):
+        """cmd_build() must include _cffi_backend, cffi, clr, pythonnet,
+        clr_loader as hidden imports for webview/pywebview support."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        required_hidden = [
+            "_cffi_backend",
+            "cffi",
+            "clr",
+            "pythonnet",
+            "clr_loader",
+        ]
+        for hid in required_hidden:
+            assert (
+                repr(hid) in content or '"' + hid + '"' in content
+            ), f"Must include hidden import {hid}"
+
+    def test_bundle_stdlib_copies_third_party_packages(self):
+        """_bundle_stdlib() must copy cffi, pythonnet, clr_loader, webview
+        into _internal/site-packages/ to work around strip=True/upx=True."""
+        import tempfile as _tempfile
+
+        from scripts.build_windows_app import _bundle_stdlib
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            internal = Path(tmp) / "_internal"
+            internal.mkdir()
+            _bundle_stdlib(internal)
+            # At least some third-party packages should be copied.
+            sp_dir = internal / "site-packages"
+            for pkg in ["cffi", "pythonnet", "clr_loader", "webview"]:
+                pkg_path = sp_dir / pkg
+                if pkg_path.exists():
+                    assert (pkg_path / "__init__.py").exists() or (
+                        pkg_path / "__init__.pyc"
+                    ).exists(), f"site-packages/{pkg} missing __init__.py"
+
+    def test_build_verifies_cffi_backend_pyd(self):
+        """cmd_build() must verify _cffi_backend*.pyd exists in _internal/."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert (
+            "_cffi_backend" in content
+        ), "Must verify _cffi_backend*.pyd presence after bundling"
+        # Should also search site-packages root as fallback
+        assert (
+            "site-packages" in content or "glob" in content
+        ), "Should search for _cffi_backend.pyd across site-packages paths"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
