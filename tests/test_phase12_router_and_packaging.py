@@ -598,6 +598,88 @@ class TestPythonDLLBundling:
             "mkdir(parents=True, exist_ok=True)" in content
         ), "Must create _internal/ directory if missing"
 
+    def test_find_pyd_files_discovers_pyds(self):
+        """_find_pyd_files() should discover *.pyd from sys.base_prefix/DLLs."""
+        from scripts.build_windows_app import _find_pyd_files
+
+        pyds = _find_pyd_files()
+        assert isinstance(pyds, list), "_find_pyd_files must return a list"
+        for entry in pyds:
+            assert isinstance(entry, str), f"Expected str path, got {type(entry)}"
+            p = Path(entry)
+            if p.exists():
+                assert p.suffix == ".pyd", f"Unexpected file type: {p.name}"
+
+    def test_bundle_stdlib_copies_encodings(self):
+        """_bundle_stdlib() must copy encodings/ into _internal/."""
+        import tempfile as _tempfile
+
+        from scripts.build_windows_app import _bundle_stdlib
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            internal = Path(tmp) / "_internal"
+            internal.mkdir()
+            _bundle_stdlib(internal)
+            # encodings/ must exist in _internal/
+            assert (
+                internal / "encodings" / "__init__.py"
+            ).exists(), "encodings/__init__.py not copied to _internal/"
+
+    def test_bundle_stdlib_builds_base_library_zip(self):
+        """_bundle_stdlib() must build base_library.zip with stdlib .py files."""
+        import tempfile as _tempfile
+        import zipfile as _zipfile
+
+        from scripts.build_windows_app import _bundle_stdlib
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            internal = Path(tmp) / "_internal"
+            internal.mkdir()
+            _bundle_stdlib(internal)
+            zip_path = internal / "base_library.zip"
+            assert zip_path.exists(), "base_library.zip not created"
+            with _zipfile.ZipFile(str(zip_path), "r") as zf:
+                names = zf.namelist()
+            # Must contain core stdlib .py files (sys is C built-in, not .py)
+            must_have = ["os.py", "io.py", "collections/__init__.py"]
+            for mod in must_have:
+                assert mod in names, f"base_library.zip missing {mod}"
+
+    def test_build_includes_stdlib_paths(self):
+        """cmd_build() spec must include base_prefix/Lib and DLLs paths."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert (
+            'base_prefix) / "Lib"' in content or "base_lib" in content
+        ), "Must include sys.base_prefix/Lib in PyInstaller pathex"
+        assert (
+            'base_prefix) / "DLLs"' in content or "base_dlls" in content
+        ), "Must include sys.base_prefix/DLLs in PyInstaller pathex"
+
+    def test_build_verifies_base_library_zip_encodings(self):
+        """cmd_build() must verify base_library.zip contains encodings."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert "base_library.zip" in content, "Must verify base_library.zip existence"
+        assert "encodings" in content, "Must check for encodings module presence"
+
+    def test_build_has_live_launch_check(self):
+        """cmd_build() must run a live launch subprocess check."""
+        build_path = (
+            Path(__file__).resolve().parent.parent / "scripts/build_windows_app.py"
+        )
+        content = build_path.read_text(encoding="utf-8")
+        assert (
+            "proc.poll()" in content
+        ), "Must check proc.poll() is None during live launch test"
+        assert (
+            "subprocess.Popen" in content
+        ), "Must use subprocess.Popen for live launch verification"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

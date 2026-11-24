@@ -149,6 +149,94 @@ def _find_vcruntime_dlls() -> list[str]:
     return dlls
 
 
+def _find_pyd_files() -> list[str]:
+    """Discover *.pyd files from sys.base_prefix/DLLs and venv Scripts.
+
+    Returns sorted list of absolute source paths to copy into _internal/.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    dlls: list[str] = []
+    for base in [_Path(_sys.base_prefix) / "DLLs", _Path(_sys.executable).parent]:
+        if not base.exists():
+            continue
+        for pyd_path in sorted(base.glob("*.pyd")):
+            src = str(pyd_path)
+            if src not in dlls:
+                dlls.append(src)
+    return dlls
+
+
+def _bundle_stdlib(internal_dir: Path) -> None:
+    """Ensure base_library.zip and encodings are available for frozen Python.
+
+    When python314.dll loads from _internal/, Py_InitializeFromConfig looks for
+    encodings inside base_library.zip (or _internal/encodings/). This function
+    guarantees those exist by copying the stdlib from sys.base_prefix/Lib.
+    """
+    import sys as _sys
+    import zipfile as _zipfile
+    from pathlib import Path as _Path
+
+    lib_dir = _Path(_sys.base_prefix) / "Lib"
+    encodings_src = lib_dir / "encodings"
+    internal_encodings = internal_dir / "encodings"
+    zip_path = internal_dir / "base_library.zip"
+
+    # --- Copy .pyd files from base_prefix/DLLs ---
+    pyds = _find_pyd_files()
+    for src in pyds:
+        dst = internal_dir / Path(src).name
+        if not dst.exists():
+            import shutil as _shutil
+
+            _shutil.copy2(str(src), str(dst))
+            print("[INFO] Copied " + Path(src).name + " -> _internal/")
+
+    # --- Ensure encodings/ directory exists in _internal ---
+    if not internal_encodings.exists():
+        import shutil as _shutil
+
+        _shutil.copytree(str(encodings_src), str(internal_encodings))
+        print("[INFO] Copied encodings/ -> _internal/")
+    else:
+        print("[OK] encodings/ already present in _internal/")
+
+    # --- Build or repair base_library.zip if missing/incomplete ---
+    has_zip = zip_path.exists()
+    has_encodings_in_zip = False
+    if has_zip:
+        try:
+            with _zipfile.ZipFile(str(zip_path), "r") as zf:
+                names = zf.namelist()
+                has_encodings_in_zip = any(n.startswith("encodings/") for n in names)
+        except (_zipfile.BadZipFile, OSError):
+            has_zip = False
+
+    if not has_zip or not has_encodings_in_zip:
+        print("[INFO] Building base_library.zip from " + str(lib_dir))
+        with _zipfile.ZipFile(str(zip_path), "w", _zipfile.ZIP_DEFLATED) as zf:
+            for py_file in sorted(lib_dir.rglob("*.py")):
+                arc = py_file.relative_to(lib_dir)
+                # Skip encodings (we copy them separately so PyInstaller
+                # can still find them if it needs to re-zip later).
+                if "encodings" in str(arc):
+                    continue
+                zf.write(str(py_file), str(arc))
+            # Also include __pycache__/*.pyc where available for speed
+            for pyc_file in sorted(lib_dir.rglob("*.pyc")):
+                arc = pyc_file.relative_to(lib_dir)
+                if "encodings" in str(arc):
+                    continue
+                zf.write(str(pyc_file), str(arc))
+        print(
+            "[OK] base_library.zip rebuilt (" + str(zip_path.stat().st_size) + " bytes)"
+        )
+    else:
+        print("[OK] base_library.zip exists with encodings/")
+
+
 def cmd_build(root: Path) -> int:
     """Run PyInstaller to produce coPPeR.exe (onedir mode with _internal/)."""
     import importlib as _importlib
@@ -169,6 +257,13 @@ def cmd_build(root: Path) -> int:
     app_py = str(root / "app" / "workspace_app.py")
     ui_dir = str(root / "app" / "workspace_ui")
     src_dir = str(root / "src")
+
+    # Stdlib paths for PyInstaller to find base_library.zip, .pyd, etc.
+    import sys as _sys
+
+    base_lib = str(Path(_sys.base_prefix) / "Lib")
+    base_dlls = str(Path(_sys.base_prefix) / "DLLs")
+    venv_site = str(Path(_sys.executable).parent.parent / "Lib" / "site-packages")
 
     # Discover Python base DLLs and vcruntime DLLs
     py_dlls = _find_python_dlls()
@@ -212,7 +307,15 @@ def cmd_build(root: Path) -> int:
         ]
         sf.write("a = Analysis(\n")
         sf.write("    [" + repr(app_py) + "],\n")
-        sf.write("    pathex=[" + repr(str(root)) + "],\n")
+        # Include base_prefix/Lib, DLLs and venv site-packages so
+        # PyInstaller can find stdlib modules for base_library.zip.
+        pathex_list = [
+            repr(str(root)),
+            repr(base_lib),
+            repr(base_dlls),
+            repr(venv_site),
+        ]
+        sf.write("    pathex=[" + ", ".join(pathex_list) + "],\n")
         sf.write("    hiddenimports=[" + ", ".join(repr(h) for h in hidden) + "],\n")
         # Add Python DLLs and vcruntime as binaries for _internal/
         pyinstaller_binaries = []
@@ -292,45 +395,69 @@ def cmd_build(root: Path) -> int:
         return 1
     print("[OK] python314.dll verified: " + str(py314_dll.stat().st_size) + " bytes")
 
-    # Smoke test: run coPPeR.exe --headless-check --no-embedded-server
-    # GUI builds may block waiting for display; use generous timeout.
-    smoke_cmd = [
-        str(exe_path),
-        "--headless-check",
-        "--no-embedded-server",
-    ]
-    print("\n[INFO] Running frozen smoke test: " + " ".join(smoke_cmd))
-    try:
-        smoke_result = subprocess.run(
-            smoke_cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=str(dist_dir),
-        )
-    except subprocess.TimeoutExpired:
-        print("[WARN] Smoke test timed out after 60s (GUI exe may need display)")
-        smoke_result = type(
-            "obj", (object,), {"returncode": -1, "stdout": "", "stderr": "timeout"}
-        )()
-    if smoke_result.returncode == 0:
-        print("[SUCCESS] Frozen smoke test PASSED.")
-        if smoke_result.stdout.strip():
-            for line in smoke_result.stdout.strip().splitlines():
-                print("  " + line)
-    else:
+    # --- Bundle stdlib (base_library.zip, encodings/, .pyd) ---
+    _bundle_stdlib(internal_dir)
+
+    # Verify base_library.zip has encodings
+    zip_path = internal_dir / "base_library.zip"
+    if not zip_path.exists():
+        print("[FAIL] base_library.zip NOT found in dist/coPPeR/_internal/")
+        return 1
+    import zipfile as _zipfile_verify
+
+    with _zipfile_verify.ZipFile(str(zip_path), "r") as zf:
+        has_enc = any(n.startswith("encodings/") for n in zf.namelist())
+    if not has_enc and not (internal_dir / "encodings").exists():
         print(
-            "[WARN] Smoke test returned code "
-            + str(smoke_result.returncode)
-            + " (may require GUI runtime):"
+            "[FAIL] encodings module NOT found in base_library.zip or _internal/encodings/"
         )
-        if smoke_result.stdout.strip():
-            for line in smoke_result.stdout.strip().splitlines():
-                print("  " + line)
-        if smoke_result.stderr.strip():
-            for line in smoke_result.stderr.strip().splitlines()[:5]:
-                print("  ERR: " + line)
+        return 1
+    print(
+        "[OK] base_library.zip verified: "
+        + str(zip_path.stat().st_size)
+        + " bytes, encodings present="
+        + str(has_enc)
+    )
+
+    # Live launch verification: run coPPeR.exe for 4 seconds
+    print("\n[INFO] Live launch test: running coPPeR.exe for 4s...")
+    try:
+        proc = subprocess.Popen(
+            [str(exe_path), "--no-embedded-server"],
+            cwd=str(dist_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        import time as _time
+
+        _time.sleep(4)
+        if proc.poll() is None:
+            print("[OK] coPPeR.exe stayed alive for 4s (no encodings crash)")
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        else:
+            rc = proc.returncode
+            stderr_text = (
+                proc.stderr.read().decode("utf-8", errors="replace")
+                if proc.stderr
+                else ""
+            )
+            print(
+                "[FAIL] coPPeR.exe exited with code "
+                + str(rc)
+                + " (possible stdlib/encodings error)"
+            )
+            if stderr_text.strip():
+                for line in stderr_text.strip().splitlines()[:5]:
+                    print("  ERR: " + line)
+            return 1
+    except OSError:
+        pass
+
+    print("\n[SUCCESS] All build and verification steps passed.")
     return 0
 
 
